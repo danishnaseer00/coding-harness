@@ -1,5 +1,6 @@
 import json
 import os
+import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -7,6 +8,24 @@ from pathlib import Path
 
 CONFIG_DIR = Path.home() / ".coding-harness"
 CONFIG_PATH = CONFIG_DIR / "config.json"
+
+
+async def retry_with_backoff(coro, max_retries=3, initial_delay=1.0, backoff=2.0):
+    """Retry async operation with exponential backoff for 503/rate-limit errors."""
+    for attempt in range(max_retries):
+        try:
+            return await coro()
+        except Exception as e:
+            err_str = str(e).lower()
+            is_rate_limit = any(x in err_str for x in ["503", "overloaded", "rate limit", "rate_limit", "too many requests"])
+            
+            if not is_rate_limit or attempt == max_retries - 1:
+                raise
+            
+            delay = initial_delay * (backoff ** attempt)
+            import sys
+            print(f"⏳ Retrying in {delay:.1f}s (attempt {attempt + 1}/{max_retries})...", file=sys.stderr)
+            await asyncio.sleep(delay)
 
 
 @dataclass
@@ -70,24 +89,40 @@ class AnthropicProvider(BaseProvider):
 
         api_messages = []
         for m in messages:
-            if isinstance(m.get("content"), list) and all(
-                isinstance(c, dict) and "type" in c for c in m["content"]
-            ):
-                api_messages.append(m)
-            else:
-                content = m.get("content", "")
-                if isinstance(content, list):
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            
+            # Handle list content (text + tool_use or tool_result blocks)
+            if isinstance(content, list):
+                # Validate that all items have required type field
+                if all(isinstance(c, dict) and "type" in c for c in content):
                     api_messages.append(m)
                 else:
-                    api_messages.append({"role": m["role"], "content": str(content)})
+                    # Fallback: stringify if not valid blocks
+                    api_messages.append({"role": role, "content": str(content)})
+            else:
+                # String content
+                api_messages.append({"role": role, "content": str(content)})
 
-        response = await self.client.messages.create(
-            model=self.model,
-            max_tokens=8192,
-            system=system_prompt,
-            tools=api_tools,
-            messages=api_messages
-        )
+        try:
+            response = await retry_with_backoff(
+                coro=lambda: self.client.messages.create(
+                    model=self.model,
+                    max_tokens=8192,
+                    system=system_prompt,
+                    tools=api_tools,
+                    messages=api_messages
+                ),
+                max_retries=3
+            )
+        except Exception as e:
+            # Log the problematic message for debugging
+            import sys
+            print(f"\n❌ Anthropic API Error: {e}", file=sys.stderr)
+            print(f"   Messages sent: {len(api_messages)} messages", file=sys.stderr)
+            if api_messages and isinstance(api_messages[-1].get("content"), list):
+                print(f"   Last message has tool blocks: {[b.get('type') for b in api_messages[-1]['content']]}", file=sys.stderr)
+            raise
 
         blocks = []
         for block in response.content:
@@ -145,19 +180,43 @@ class OpenAICompatibleProvider(BaseProvider):
 
         api_messages = [{"role": "system", "content": system_prompt}]
         for m in messages:
-            content = m.get("content", "")
             role = m.get("role", "user")
-            if isinstance(content, list):
+            content = m.get("content", "")
+
+            if role == "assistant" and isinstance(content, list):
+                text_parts = []
+                tool_calls = []
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get("type") == "text":
+                            text_parts.append(item.get("text", ""))
+                        elif item.get("type") == "tool_use":
+                            tool_calls.append({
+                                "id": item.get("id", ""),
+                                "type": "function",
+                                "function": {
+                                    "name": item.get("name", ""),
+                                    "arguments": json.dumps(item.get("input", {}))
+                                }
+                            })
+                msg = {"role": "assistant"}
+                if tool_calls:
+                    msg["content"] = "\n".join(text_parts) if text_parts else None
+                    msg["tool_calls"] = tool_calls
+                else:
+                    msg["content"] = "\n".join(text_parts) if text_parts else ""
+                api_messages.append(msg)
+
+            elif role == "user" and isinstance(content, list):
                 for item in content:
                     if isinstance(item, dict) and item.get("type") == "tool_result":
+                        tool_call_id = item.get("tool_use_id") or item.get("id", "")
                         api_messages.append({
                             "role": "tool",
-                            "tool_call_id": item.get("tool_use_id", ""),
-                            "content": item.get("content", "")
+                            "tool_call_id": tool_call_id,
+                            "content": str(item.get("content", ""))
                         })
-                    else:
-                        api_messages.append({"role": role, "content": str(content)})
-                        break
+
             else:
                 api_messages.append({"role": role, "content": str(content)})
 
@@ -170,9 +229,25 @@ class OpenAICompatibleProvider(BaseProvider):
             kwargs["tools"] = api_tools
 
         try:
-            response = await self.client.chat.completions.create(**kwargs)
+            response = await retry_with_backoff(
+                coro=lambda: self.client.chat.completions.create(**kwargs),
+                max_retries=3
+            )
         except Exception as e:
             err = str(e)
+            
+            # Log debugging info
+            import sys
+            print(f"\n❌ OpenAI-Compatible API Error: {err[:200]}", file=sys.stderr)
+            print(f"   Messages: {len(api_messages)} total", file=sys.stderr)
+            if api_messages:
+                print(f"   Message types: {[m.get('role') for m in api_messages]}", file=sys.stderr)
+                last = api_messages[-1]
+                if last.get("role") == "tool":
+                    print(f"   Last msg: tool result (id={last.get('tool_call_id')})", file=sys.stderr)
+                elif isinstance(last.get("content"), list):
+                    print(f"   Last msg: user with blocks {[b.get('type') for b in last['content']]}", file=sys.stderr)
+            
             if "tool_use_failed" in err:
                 kwargs_no_tools = {k: v for k, v in kwargs.items() if k != "tools"}
                 try:
@@ -311,19 +386,43 @@ class OllamaProvider(BaseProvider):
 
         api_messages = [{"role": "system", "content": system_prompt}]
         for m in messages:
-            content = m.get("content", "")
             role = m.get("role", "user")
-            if isinstance(content, list):
+            content = m.get("content", "")
+
+            if role == "assistant" and isinstance(content, list):
+                text_parts = []
+                tool_calls = []
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get("type") == "text":
+                            text_parts.append(item.get("text", ""))
+                        elif item.get("type") == "tool_use":
+                            tool_calls.append({
+                                "id": item.get("id", ""),
+                                "type": "function",
+                                "function": {
+                                    "name": item.get("name", ""),
+                                    "arguments": json.dumps(item.get("input", {}))
+                                }
+                            })
+                msg = {"role": "assistant"}
+                if tool_calls:
+                    msg["content"] = "\n".join(text_parts) if text_parts else None
+                    msg["tool_calls"] = tool_calls
+                else:
+                    msg["content"] = "\n".join(text_parts) if text_parts else ""
+                api_messages.append(msg)
+
+            elif role == "user" and isinstance(content, list):
                 for item in content:
                     if isinstance(item, dict) and item.get("type") == "tool_result":
+                        tool_call_id = item.get("tool_use_id") or item.get("id", "")
                         api_messages.append({
                             "role": "tool",
-                            "tool_call_id": item.get("tool_use_id", ""),
-                            "content": item.get("content", "")
+                            "tool_call_id": tool_call_id,
+                            "content": str(item.get("content", ""))
                         })
-                    else:
-                        api_messages.append({"role": role, "content": str(content)})
-                        break
+
             else:
                 api_messages.append({"role": role, "content": str(content)})
 
@@ -336,8 +435,14 @@ class OllamaProvider(BaseProvider):
             kwargs["tools"] = api_tools
 
         try:
-            response = await self.client.chat.completions.create(**kwargs)
+            response = await retry_with_backoff(
+                coro=lambda: self.client.chat.completions.create(**kwargs),
+                max_retries=3
+            )
         except Exception as e:
+            import sys
+            print(f"\n❌ Ollama API Error: {e}", file=sys.stderr)
+            print(f"   Messages: {len(api_messages)} total", file=sys.stderr)
             return ProviderResponse(
                 content=[ContentBlock(type="text", text=f"error: ollama request failed: {e}")],
                 stop_reason="end_turn"
@@ -369,7 +474,7 @@ class OllamaProvider(BaseProvider):
     def get_available_models(self) -> list[str]:
         try:
             import httpx
-            resp = httpx.get(f"{self.base_url}/api/tags", timeout=5)
+            resp = httpx.get(f"{self.base_url}/api/tags", timeout=1)
             data = resp.json()
             return [m["name"] for m in data.get("models", [])]
         except Exception:
@@ -409,7 +514,8 @@ def create_provider(provider_name: str, model: str | None = None, api_key: str |
 
 def get_default_provider() -> BaseProvider:
     cfg = load_config()
-    pname = cfg.get("provider", "tokenrouter")
-    model = cfg.get("model")
-    api_key = cfg.get("api_key")
+    # Check env var first, then config file, then default to tokenrouter
+    pname = os.environ.get("CODING_HARNESS_PROVIDER") or cfg.get("provider", "tokenrouter")
+    model = os.environ.get("CODING_HARNESS_MODEL") or cfg.get("model")
+    api_key = os.environ.get("CODING_HARNESS_API_KEY") or cfg.get("api_key")
     return create_provider(pname, model, api_key)

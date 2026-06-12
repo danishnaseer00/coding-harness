@@ -16,10 +16,11 @@ fi
 
 pip install -e .
 
-if [ -z "$ANTHROPIC_API_KEY" ]; then
+# Check if any provider API key is set
+if [ -z "$TOKENROUTER_API_KEY" ] && [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$OPENAI_API_KEY" ] && [ -z "$GROQ_API_KEY" ] && [ -z "$OPENROUTER_API_KEY" ]; then
     echo ""
-    echo "No ANTHROPIC_API_KEY found."
-    echo "Set one of these in your ~/.bashrc or ~/.zshrc:"
+    echo "⚠️  No API keys found. Set at least one in your ~/.bashrc or ~/.zshrc:"
+    echo "  export TOKENROUTER_API_KEY=your_key_here     (default provider)"
     echo "  export ANTHROPIC_API_KEY=your_key_here"
     echo "  export OPENAI_API_KEY=your_key_here"
     echo "  export GROQ_API_KEY=your_key_here"
@@ -27,4 +28,8 @@ if [ -z "$ANTHROPIC_API_KEY" ]; then
 fi
 
 echo ""
-echo "Done. Run: harness --cwd /path/to/your/project"
+echo "✅ Installation complete. Run:"
+echo "  harness --cwd /path/to/your/project"
+echo ""
+echo "To use a different provider, set CODING_HARNESS_PROVIDER environment variable:"
+echo "  export CODING_HARNESS_PROVIDER=anthropic  # or: groq, openai, tokenrouter, etc."

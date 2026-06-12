@@ -95,9 +95,20 @@ Rules:
 
             dynamic = self._build_dynamic_suffix(user_message)
             api_messages = []
-            for m in self.messages[:-1]:
-                api_messages.append(m)
-            api_messages.append({"role": "user", "content": dynamic})
+            
+            # If last message is tool results, preserve the full conversation
+            if (self.messages and isinstance(self.messages[-1].get("content"), list) and 
+                any(item.get("type") == "tool_result" for item in self.messages[-1]["content"])):
+                # Tool results are present - use all messages as-is
+                api_messages = self.messages.copy()
+            else:
+                # Normal flow: append dynamic suffix
+                for m in self.messages[:-1]:
+                    api_messages.append(m)
+                api_messages.append({"role": "user", "content": dynamic})
+
+            # Emit thinking status
+            self._emit("thinking")
 
             try:
                 response = await self.provider.send(
@@ -112,12 +123,27 @@ Rules:
                 continue
 
             text_response = response.text
+
+            # Build assistant content blocks (text + tool_use)
+            assistant_blocks = []
+            if text_response:
+                assistant_blocks.append({"type": "text", "text": text_response})
+            for block in response.content:
+                if block.type == "tool_use":
+                    assistant_blocks.append({
+                        "type": "tool_use",
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input
+                    })
+
             if text_response:
                 self._emit("assistant_text", text_response)
 
-            self.messages.append({"role": "assistant", "content": text_response or "(tool call)"})
+            self.messages.append({"role": "assistant", "content": assistant_blocks if assistant_blocks else "(tool call)"})
+            display_text = text_response or "(tool call)" if not assistant_blocks else text_response or "(tool call)"
             if self.session_store:
-                self.session_store.record("assistant", text_response or "(tool call)")
+                self.session_store.record("assistant", display_text)
 
             if response.stop_reason == "end_turn":
                 return text_response
@@ -181,7 +207,14 @@ Rules:
     def _emit(self, event: str, *args):
         cb = self._callbacks.get(event)
         if cb:
-            cb(*args)
+            try:
+                cb(*args)
+            except TypeError:
+                # If callback signature doesn't match, try without args
+                try:
+                    cb()
+                except Exception:
+                    pass
         else:
             from display import print_assistant, print_tool_call, print_tool_result, print_error
             if event == "assistant_text":

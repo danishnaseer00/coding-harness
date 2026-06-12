@@ -64,15 +64,16 @@ class HarnessApp(App):
         width: 100%;
         height: 1fr;
         border: none;
-        padding: 0 1;
+        padding: 0;
         overflow-y: auto;
+        overflow-x: hidden;
     }
 
     #chat-input {
         width: 100%;
         height: 3;
         border: solid $primary;
-        margin: 0 1;
+        margin: 0;
     }
 
     #status-bar {
@@ -80,7 +81,7 @@ class HarnessApp(App):
         height: 1;
         background: $surface;
         color: $text-muted;
-        padding: 0 1;
+        padding: 0;
         content-align: left middle;
     }
     """
@@ -119,33 +120,61 @@ class HarnessApp(App):
 
     def _write_user(self, text: str):
         self.query_one("#chat-log", RichLog).write(
-            Panel(Text(text, style="bold"), title="you", border_style="blue", width=None)
+            Panel(Text(text, style="bold"), title="you", border_style="blue", expand=True)
         )
 
     def _write_assistant(self, text: str):
         md = Markdown(text)
         self.query_one("#chat-log", RichLog).write(
-            Panel(md, title="assistant", border_style="green", width=None)
+            Panel(md, title="assistant", border_style="green", expand=True)
         )
 
     def _write_tool_call(self, name: str, args: dict):
         args_str = " ".join(f"{k}={v}" for k, v in args.items())
         self.query_one("#chat-log", RichLog).write(
-            Text(f"  >> {name}({args_str})", style="bold cyan")
+            Text(f"  ⚙️  {name}({args_str})", style="bold cyan")
         )
 
     def _write_tool_result(self, result: str, duration: float = 0):
-        preview = result.strip()[:200]
+        # Show first few lines of result
+        lines = result.strip().split("\n")[:3]
+        preview = "\n    ".join(lines)
         dur = f" ({duration:.1f}s)" if duration else ""
         self.query_one("#chat-log", RichLog).write(
-            Text(f"  └─ {preview}{dur}", style="dim")
+            Text(f"  └─ {preview}{dur}", style="dim green")
         )
 
     def _write_system(self, text: str):
-        self.query_one("#chat-log", RichLog).write(Text(f"  ■ {text}", style="dim"))
+        if "\n" in text:
+            lines = [f"  ■ {line}" for line in text.split("\n")]
+            self.query_one("#chat-log", RichLog).write(Text("\n".join(lines), style="dim"))
+        else:
+            self.query_one("#chat-log", RichLog).write(Text(f"  ■ {text}", style="dim"))
 
     def _write_error(self, text: str):
         self.query_one("#chat-log", RichLog).write(Text(f"  x {text}", style="bold red"))
+
+    def _write_slash_menu(self):
+        """Show interactive slash command menu."""
+        from rich.table import Table
+        
+        table = Table(title="Slash Commands", show_header=True, header_style="bold cyan")
+        table.add_column("Command", style="bold yellow")
+        table.add_column("Description", style="dim")
+        
+        commands = [
+            ("/help", "Show all commands"),
+            ("/model", "Show or change model"),
+            ("/providers", "List available providers"),
+            ("/clear", "Clear conversation history"),
+            ("/resume [id]", "Resume a session"),
+            ("/exit", "Exit the application"),
+        ]
+        
+        for cmd, desc in commands:
+            table.add_row(cmd, desc)
+        
+        self.query_one("#chat-log", RichLog).write(table)
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         input_widget = self.query_one("#chat-input", Input)
@@ -171,6 +200,25 @@ class HarnessApp(App):
             return
 
         self._write_user(text)
+        
+        # Create callbacks for real-time feedback
+        def on_tool_call(name, args):
+            self._write_tool_call(name, args)
+            self._update_status(f"⚙️  {name}...")
+            
+        def on_tool_result(name, result, duration):
+            self._write_tool_result(result, duration)
+            self._update_status("")
+        
+        callbacks = {
+            "thinking": lambda: self._update_status("thinking..."),
+            "assistant_text": self._write_assistant,
+            "tool_call": on_tool_call,
+            "tool_result": on_tool_result,
+            "error": self._write_error,
+        }
+        
+        self.agent._callbacks = callbacks
         self._update_status("thinking...")
 
         try:
@@ -182,6 +230,12 @@ class HarnessApp(App):
 
     async def _handle_slash(self, cmd: str):
         parts = cmd.strip().lstrip("/").split()
+        
+        # If just "/" with no command, show menu
+        if not parts or not parts[0]:
+            self._write_slash_menu()
+            return
+        
         command = parts[0].lower()
 
         if command in ("exit", "quit"):
@@ -189,17 +243,8 @@ class HarnessApp(App):
             return
 
         if command == "help":
-            self._write_system("Commands:")
-            self._write_system("  /help              Show this help")
-            self._write_system("  /exit              Exit")
-            self._write_system("  /model             Show current model")
-            self._write_system("  /model <name>      Switch model (e.g. /model MiniMax-M3)")
-            self._write_system("  /model <p>/<m>     Switch provider and model")
-            self._write_system("  /providers         List all providers")
-            self._write_system("  /clear             Clear history")
-            self._write_system("  /resume [id]       Resume session")
-            self._write_system("")
-            self._write_system("Tip: just paste an API key — it auto-detects the provider")
+            self._write_slash_menu()
+            self._write_system("💡 Tip: just paste an API key — it auto-detects the provider")
             return
 
         if command == "model":
@@ -233,10 +278,24 @@ class HarnessApp(App):
             return
 
         if command == "providers":
-            for name, cls in PROVIDER_REGISTRY.items():
-                p = cls()
-                models = p.get_available_models()
-                self._write_system(f"  {name}: {', '.join(models[:4])}")
+            from rich.table import Table
+            
+            table = Table(title="Available Providers", show_header=True, header_style="bold cyan")
+            table.add_column("Provider", style="bold yellow")
+            table.add_column("Available Models", style="dim")
+            
+            for name, cls in sorted(PROVIDER_REGISTRY.items()):
+                try:
+                    p = cls()
+                    models = p.get_available_models()
+                    model_list = ", ".join(models[:3])
+                    if len(models) > 3:
+                        model_list += f" (+{len(models) - 3} more)"
+                    table.add_row(name, model_list)
+                except Exception:
+                    table.add_row(name, "(unavailable)")
+            
+            self.query_one("#chat-log", RichLog).write(table)
             return
 
         if command == "clear":
