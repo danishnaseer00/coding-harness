@@ -264,7 +264,7 @@ class OpenRouterProvider(OpenAICompatibleProvider):
 
 
 class TokenRouterProvider(OpenAICompatibleProvider):
-    def __init__(self, model: str = "minimax/MiniMax-M3",
+    def __init__(self, model: str = "MiniMax-M3",
                  api_key: str | None = None):
         super().__init__(
             model=model,
@@ -275,7 +275,7 @@ class TokenRouterProvider(OpenAICompatibleProvider):
 
     def get_available_models(self) -> list[str]:
         return [
-            "minimax/MiniMax-M3",
+            "MiniMax-M3",
         ]
 
 
