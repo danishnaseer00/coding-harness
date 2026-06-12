@@ -243,7 +243,7 @@ class GroqProvider(OpenAICompatibleProvider):
 
 
 class OpenRouterProvider(OpenAICompatibleProvider):
-    def __init__(self, model: str = "anthropic/claude-sonnet-4",
+    def __init__(self, model: str = "minimax/minimax-m3",
                  api_key: str | None = None):
         super().__init__(
             model=model,
@@ -254,10 +254,12 @@ class OpenRouterProvider(OpenAICompatibleProvider):
 
     def get_available_models(self) -> list[str]:
         return [
+            "minimax/minimax-m3",
             "anthropic/claude-sonnet-4",
             "openai/gpt-4o",
             "google/gemini-2.0-flash-001",
             "meta-llama/llama-3.3-70b-instruct",
+            "deepseek/deepseek-chat",
         ]
 
 
@@ -390,7 +392,7 @@ def create_provider(provider_name: str, model: str | None = None, api_key: str |
 
 def get_default_provider() -> BaseProvider:
     cfg = load_config()
-    pname = cfg.get("provider", "anthropic")
+    pname = cfg.get("provider", "openrouter")
     model = cfg.get("model")
     api_key = cfg.get("api_key")
     return create_provider(pname, model, api_key)
