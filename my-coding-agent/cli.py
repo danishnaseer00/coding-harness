@@ -1,6 +1,8 @@
 import argparse
+import re
 
 from textual.app import App, ComposeResult
+from textual.suggester import Suggester
 from textual.widgets import Header, Input, RichLog, Static
 from rich.text import Text
 from rich.markdown import Markdown
@@ -11,16 +13,44 @@ from memory import SessionStore
 from providers import PROVIDER_REGISTRY, create_provider, load_config, save_config
 
 
+SLASH_COMMANDS = ["/help", "/exit", "/model", "/providers", "/clear", "/resume"]
+
+
+API_KEY_PROVIDERS = [
+    (re.compile(r"^sk-ant-"), "anthropic"),
+    (re.compile(r"^sk-or-"), "openrouter"),
+    (re.compile(r"^sk-"), "openai"),
+    (re.compile(r"^gsk_"), "groq"),
+    (re.compile(r"^tr_"), "tokenrouter"),
+]
+
+
+def detect_provider_from_key(key: str) -> str | None:
+    for pattern, provider in API_KEY_PROVIDERS:
+        if pattern.match(key):
+            return provider
+    return None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Coding Harness — an AI coding agent")
     parser.add_argument("--cwd", default=".", help="Working directory")
     parser.add_argument("--resume", nargs="?", const="latest",
-                        help="Resume a session (pass 'latest' or a session ID)")
+                        help="Resume a session")
     parser.add_argument("--provider", default=None, help="LLM provider")
     parser.add_argument("--model", default=None, help="Model name")
     parser.add_argument("--policy", default="ask", choices=["ask", "auto", "never"],
                         help="Approval policy for risky tools")
     return parser.parse_args()
+
+
+class CommandSuggester(Suggester):
+    async def get_suggestion(self, value: str) -> str | None:
+        if value.startswith("/"):
+            for cmd in SLASH_COMMANDS:
+                if cmd.startswith(value) and cmd != value:
+                    return cmd[len(value):]
+        return None
 
 
 class HarnessApp(App):
@@ -38,19 +68,11 @@ class HarnessApp(App):
         overflow-y: auto;
     }
 
-    #input-container {
-        width: 100%;
-        height: 3;
-        padding: 0 1;
-        background: $surface;
-        border-top: solid $primary;
-    }
-
     #chat-input {
         width: 100%;
         height: 3;
         border: solid $primary;
-        margin: 0;
+        margin: 0 1;
     }
 
     #status-bar {
@@ -71,7 +93,7 @@ class HarnessApp(App):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield RichLog(id="chat-log", highlight=True, markup=True, wrap=True)
-        yield Input(id="chat-input", placeholder="Type a message...")
+        yield Input(id="chat-input", placeholder="Type a message or paste an API key...", suggester=CommandSuggester())
         yield Static(id="status-bar")
 
     def on_mount(self) -> None:
@@ -137,6 +159,17 @@ class HarnessApp(App):
             await self._handle_slash(text)
             return
 
+        provider = detect_provider_from_key(text)
+        if provider:
+            cfg = load_config()
+            cfg["api_key"] = text
+            cfg["provider"] = provider
+            save_config(cfg)
+            self.agent.provider = create_provider(provider, cfg.get("model"), text)
+            self._write_system(f"API key saved — switched to {provider}")
+            self._update_status()
+            return
+
         self._write_user(text)
         self._update_status("thinking...")
 
@@ -156,34 +189,33 @@ class HarnessApp(App):
             return
 
         if command == "help":
-            self._write_system("Available commands:")
-            self._write_system("  /help              - Show this help")
-            self._write_system("  /exit              - Exit the harness")
-            self._write_system("  /model             - Show current provider/model")
-            self._write_system("  /model list        - List available providers")
-            self._write_system("  /model set <p>/<m> - Switch provider/model")
-            self._write_system("  /key <api_key>     - Set API key and save to config")
-            self._write_system("  /resume            - Resume latest session")
-            self._write_system("  /resume <id>       - Resume specific session")
-            self._write_system("  /clear             - Clear conversation history")
+            self._write_system("Commands:")
+            self._write_system("  /help              Show this help")
+            self._write_system("  /exit              Exit")
+            self._write_system("  /model             Show current model")
+            self._write_system("  /model <name>      Switch model (e.g. /model MiniMax-M3)")
+            self._write_system("  /model <p>/<m>     Switch provider and model")
+            self._write_system("  /providers         List all providers")
+            self._write_system("  /clear             Clear history")
+            self._write_system("  /resume [id]       Resume session")
+            self._write_system("")
+            self._write_system("Tip: just paste an API key — it auto-detects the provider")
             return
 
         if command == "model":
             if len(parts) == 1:
                 self._write_system(f"Provider: {self.agent.provider.name}")
                 self._write_system(f"Model: {self.agent.provider.model}")
-            elif parts[1] == "list":
-                for name, cls in PROVIDER_REGISTRY.items():
-                    p = cls()
-                    models = p.get_available_models()
-                    self._write_system(f"  {name}: {', '.join(models[:4])}")
-            elif parts[1] == "set" and len(parts) >= 3:
-                val = parts[2]
+            else:
+                val = parts[1]
                 if "/" in val:
                     pname, model = val.split("/", 1)
                 else:
-                    pname = val
-                    model = parts[3] if len(parts) > 3 else None
+                    pname = parts[1] if len(parts) > 1 else self.agent.provider.name
+                    model = parts[2] if len(parts) > 2 else None
+                if pname not in PROVIDER_REGISTRY and model is None:
+                    model = pname
+                    pname = self.agent.provider.name
                 if pname not in PROVIDER_REGISTRY:
                     self._write_error(f"Unknown provider: {pname}")
                     return
@@ -200,15 +232,11 @@ class HarnessApp(App):
                     self._write_error(str(e))
             return
 
-        if command == "key":
-            if len(parts) < 2:
-                self._write_error("Usage: /key <api_key>")
-                return
-            api_key = parts[1]
-            cfg = load_config()
-            cfg["api_key"] = api_key
-            save_config(cfg)
-            self._write_system("API key saved. Run /model set <provider>/<model> to activate")
+        if command == "providers":
+            for name, cls in PROVIDER_REGISTRY.items():
+                p = cls()
+                models = p.get_available_models()
+                self._write_system(f"  {name}: {', '.join(models[:4])}")
             return
 
         if command == "clear":
@@ -230,7 +258,8 @@ class HarnessApp(App):
                 self._write_error(f"Session not found: {sid}")
             return
 
-        self._write_error(f"Unknown command: {command}. Type /help")
+        self._write_error(f"Unknown: {command}. Try /help")
+
 
 def main():
     args = parse_args()
