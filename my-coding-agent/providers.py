@@ -263,6 +263,22 @@ class OpenRouterProvider(OpenAICompatibleProvider):
         ]
 
 
+class TokenRouterProvider(OpenAICompatibleProvider):
+    def __init__(self, model: str = "minimax/MiniMax-M3",
+                 api_key: str | None = None):
+        super().__init__(
+            model=model,
+            api_key=api_key or os.environ.get("TOKENROUTER_API_KEY", ""),
+            base_url="https://api.tokenrouter.com/v1",
+            name="tokenrouter"
+        )
+
+    def get_available_models(self) -> list[str]:
+        return [
+            "minimax/MiniMax-M3",
+        ]
+
+
 class OllamaProvider(BaseProvider):
     name = "ollama"
 
@@ -365,6 +381,7 @@ PROVIDER_REGISTRY = {
     "openai": OpenAICompatibleProvider,
     "groq": GroqProvider,
     "openrouter": OpenRouterProvider,
+    "tokenrouter": TokenRouterProvider,
     "ollama": OllamaProvider,
 }
 
@@ -392,7 +409,7 @@ def create_provider(provider_name: str, model: str | None = None, api_key: str |
 
 def get_default_provider() -> BaseProvider:
     cfg = load_config()
-    pname = cfg.get("provider", "openrouter")
+    pname = cfg.get("provider", "tokenrouter")
     model = cfg.get("model")
     api_key = cfg.get("api_key")
     return create_provider(pname, model, api_key)
