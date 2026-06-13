@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+*.pyo
 *.egg-info/
 dist/
 *.egg
@@ -7,6 +8,10 @@ dist/
 venv/
 .env
 .harness_cache/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.DS_Store
 
 archiecture.md
 task.md
