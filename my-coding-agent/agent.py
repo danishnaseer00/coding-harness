@@ -412,17 +412,14 @@ Report back your findings concisely. When done, provide a clear summary."""
                 except Exception:
                     pass
         else:
-            from display import print_assistant, print_tool_call, print_tool_result, print_error
             if event == "stream_text":
                 print(args[0], end="", flush=True)
             elif event == "assistant_text":
-                print_assistant(args[0])
+                print(args[0])
             elif event == "tool_call":
-                print_tool_call(args[0], args[1])
-            elif event == "tool_result":
-                print_tool_result(args[0], args[1], args[2] if len(args) > 2 else 0)
+                print(f"  [{args[0]}(...)]")
             elif event == "error":
-                print_error(args[0])
+                print(f"  x {args[0]}", file=sys.stderr)
 
     async def _execute_tool(self, name: str, args: dict) -> str:
         if name == "note":
