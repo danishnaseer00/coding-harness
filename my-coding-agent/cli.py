@@ -19,13 +19,14 @@ from providers import PROVIDER_REGISTRY, create_provider, load_config, save_conf
 console = Console()
 HISTORY_PATH = Path.home() / ".coding-harness" / "history"
 
-SLASH_COMMANDS = ["/help", "/exit", "/model", "/providers", "/clear", "/resume", "/sessions"]
+SLASH_COMMANDS = ["/help", "/exit", "/model", "/providers", "/clear", "/new", "/resume", "/sessions"]
 
 SLASH_HELP = {
     "/help": "Show all commands",
     "/model": "Show or change model",
     "/providers": "List available providers",
     "/clear": "Clear conversation history",
+    "/new": "Start a new session (carries last message forward)",
     "/resume [id]": "Resume a session (or /resume to pick from list)",
     "/sessions": "List sessions for this project",
     "/exit": "Exit the application",
@@ -266,6 +267,18 @@ class Harness:
             console.print("[dim]■ History cleared[/dim]")
             return
 
+        if command == "new":
+            self.session_store.save()
+            self.agent.messages = []
+            self.agent.memory = {"task": "", "files": [], "notes": []}
+            self.agent.repeat_detector.last_call = None
+            new_store = SessionStore(project_path=self.agent.cwd)
+            self.session_store = new_store
+            self.agent.session_store = new_store
+            console.clear()
+            print_system(f"New session started: {new_store.session_id}")
+            return
+
         if command == "resume":
             sid = parts[1] if len(parts) > 1 else ""
             if not sid:
@@ -277,7 +290,7 @@ class Harness:
                 for i, s in enumerate(sessions, 1):
                     date = s.get("created", "")[:10]
                     print(f"  [{i}] {s['id']}  {date}  {s['summary'][:80]}")
-                console.print("\n[dim]Run /resume &lt;id&gt; or /resume &lt;number&gt; to resume[/dim]")
+                console.print("\n[dim]Type /resume 1 (or any number from the list) to resume that session[/dim]")
                 return
             try:
                 if sid.isdigit():
