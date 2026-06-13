@@ -16,7 +16,6 @@ fi
 
 pip install -e .
 
-# Check if any provider API key is set
 if [ -z "$TOKENROUTER_API_KEY" ] && [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$OPENAI_API_KEY" ] && [ -z "$GROQ_API_KEY" ] && [ -z "$OPENROUTER_API_KEY" ]; then
     echo ""
     echo "⚠️  No API keys found. Set at least one in your ~/.bashrc or ~/.zshrc:"
@@ -28,7 +27,7 @@ if [ -z "$TOKENROUTER_API_KEY" ] && [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$OPENAI
 fi
 
 echo ""
-echo "✅ Installation complete. Run:"
+echo "  Installation complete. Run:"
 echo "  harness --cwd /path/to/your/project"
 echo ""
 echo "To use a different provider, set CODING_HARNESS_PROVIDER environment variable:"
