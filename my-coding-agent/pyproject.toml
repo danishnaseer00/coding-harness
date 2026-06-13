@@ -7,7 +7,8 @@ name = "coding-harness"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
-    "textual>=1.0.0",
+    "prompt_toolkit>=3.0.0",
+    "rich>=13.0.0",
     "anthropic>=0.25.0",
     "openai>=1.0.0",
     "httpx>=0.27.0"
