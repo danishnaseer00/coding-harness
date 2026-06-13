@@ -117,7 +117,9 @@ def _first_existing(base: Path, *names: str) -> str | None:
 
 
 def load_soul(cwd: str | None = None) -> str:
-    for base in ([Path(cwd).resolve()] if cwd else []) + [Path(__file__).parent]:
+    pkg = Path(__file__).parent
+    bases = ([Path(cwd).resolve()] if cwd else []) + [pkg / "cfg", pkg]
+    for base in bases:
         result = _first_existing(base, "SOUL.md", "soul.md")
         if result is not None:
             return result
@@ -125,7 +127,9 @@ def load_soul(cwd: str | None = None) -> str:
 
 
 def load_agents_md(cwd: str | None = None) -> str:
-    for base in ([Path(cwd).resolve()] if cwd else []) + [Path(__file__).parent]:
+    pkg = Path(__file__).parent
+    bases = ([Path(cwd).resolve()] if cwd else []) + [pkg / "cfg", pkg]
+    for base in bases:
         result = _first_existing(base, "AGENTS.md", "agents.md")
         if result is not None:
             return result
@@ -133,10 +137,11 @@ def load_agents_md(cwd: str | None = None) -> str:
 
 
 def _load_system_template(cwd: str | None = None) -> str:
+    pkg = Path(__file__).parent
     bases = []
     if cwd:
         bases.append(Path(cwd).resolve())
-    bases.append(Path(__file__).parent)
+    bases += [pkg / "cfg", pkg]
     for base in bases:
         result = _first_existing(base, "SYSTEM_PROMPT.md", "system_prompt.md", "system-prompt.md")
         if result is not None:

@@ -12,6 +12,3 @@ venv/
 .pytest_cache/
 .ruff_cache/
 .DS_Store
-
-archiecture.md
-task.md
