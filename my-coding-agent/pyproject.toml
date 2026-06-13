@@ -18,4 +18,4 @@ dependencies = [
 harness = "cli:main"
 
 [tool.setuptools]
-py-modules = ["cli", "agent", "tools", "memory", "context", "display", "providers"]
+py-modules = ["cli", "agent", "tools", "memory", "context", "display", "providers", "guardrails", "eval"]

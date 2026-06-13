@@ -3,6 +3,7 @@ import time
 from pathlib import Path
 
 from context import clip, summarize_old_messages
+from guardrails import check_tool as check_guardrails, check_output, guardrail_rules
 from memory import WorkspaceContext, update_memory
 from providers import get_default_provider, StreamEvent
 from tools import (
@@ -14,12 +15,44 @@ STREAM_TIMEOUT = 60
 
 
 SOUL_PATH = Path(__file__).parent / "SOUL.md"
+AGENTS_PATH = Path(__file__).parent / "AGENTS.md"
+SYSTEM_PROMPT_PATH = Path(__file__).parent / "SYSTEM_PROMPT.md"
 
 
 def load_soul() -> str:
     if SOUL_PATH.exists():
         return SOUL_PATH.read_text()
     return ""
+
+
+def load_agents_md() -> str:
+    if AGENTS_PATH.exists():
+        return AGENTS_PATH.read_text()
+    return ""
+
+
+def _load_system_template() -> str:
+    if SYSTEM_PROMPT_PATH.exists():
+        return SYSTEM_PROMPT_PATH.read_text()
+    return """You are a coding agent. You help the user build and modify code.
+
+{workspace_context}
+
+{soul}
+
+Available tools:
+{tool_list}
+
+Enforced guardrails:
+{guardrail_rules}
+
+Rules:
+- Before writing tests for existing code, read the implementation first
+- New files must be complete and runnable
+- Do not repeat the same tool call with the same args if it didn't help
+- Use the note tool to save important observations you will need later
+- Always read a file before editing it
+- For simple tasks (creating a file, running a command), do it directly without unnecessary exploration"""
 
 
 DEFAULT_TOOL_DESC = "\n".join(
@@ -41,6 +74,7 @@ class Agent:
         provider=None,
         session_store=None,
         callbacks: dict | None = None,
+        system_prompt: str | None = None,
     ):
         self.cwd = cwd
         self.approval_policy = approval_policy
@@ -56,25 +90,22 @@ class Agent:
         self._step_count = 0
         self._streaming_failed = False
 
-        self.workspace = WorkspaceContext(cwd=cwd)
-        soul = load_soul()
+        if system_prompt:
+            self._base_prompt = system_prompt
+        else:
+            self.workspace = WorkspaceContext(cwd=cwd)
+            soul = load_soul()
+            agents_md = load_agents_md()
+            template = _load_system_template()
+            agents_context = f"\nProject instructions:\n{agents_md}\n" if agents_md else ""
 
-        self._base_prompt = f"""You are a coding agent. You help the user build and modify code.
-
-{self.workspace.build()}
-
-{soul}
-
-Available tools:
-{DEFAULT_TOOL_DESC}
-
-Rules:
-- Before writing tests for existing code, read the implementation first
-- New files must be complete and runnable
-- Do not repeat the same tool call with the same args if it didn't help
-- Use the note tool to save important observations you will need later
-- Always read a file before editing it
-- For simple tasks (creating a file, running a command), do it directly without unnecessary exploration"""
+            self._base_prompt = template.format(
+                workspace_context=self.workspace.build(),
+                soul=soul,
+                agents_context=agents_context,
+                tool_list=DEFAULT_TOOL_DESC,
+                guardrail_rules=guardrail_rules(),
+            )
 
     def _build_system(self) -> str:
         mem = self.memory
@@ -173,6 +204,10 @@ Rules:
 
             assistant_blocks = []
             if streaming_text:
+                out_err = check_output(streaming_text)
+                if out_err:
+                    self._emit("error", out_err)
+                    streaming_text = f"[System: model output was filtered — {out_err}]"
                 assistant_blocks.append({"type": "text", "text": streaming_text})
             for tc in tool_calls:
                 assistant_blocks.append({
@@ -213,6 +248,9 @@ Rules:
                         if error:
                             result = f"error: {error}"
                             self._emit("error", result)
+                        elif (guard_err := check_guardrails(name, args, self.cwd)):
+                            result = f"error: guardrail blocked: {guard_err}"
+                            self._emit("error", result)
                         elif not approve(name, args, self.approval_policy):
                             result = f"error: {name} was denied by user"
                             self._emit("error", result)
@@ -241,6 +279,34 @@ Rules:
 
         return f"Stopped: reached max steps ({self.max_steps})"
 
+    async def _run_subagent(self, task: str, context: str = "") -> str:
+        if self.depth >= 1:
+            return "error: subagents cannot spawn subagents (max depth reached)"
+
+        prompt = f"""You are a focused sub-agent. Complete the following task using the available tools.
+
+Task: {task}
+{f"Context: {context}" if context else ""}
+
+You can read files, search code, and explore the workspace but CANNOT write files or run shell commands.
+
+Enforced guardrails:
+{guardrail_rules()}
+
+Report back your findings concisely. When done, provide a clear summary."""
+        child = Agent(
+            cwd=self.cwd,
+            approval_policy="never",
+            read_only=True,
+            max_steps=5,
+            depth=self.depth + 1,
+            provider=self.provider,
+            callbacks=self._callbacks,
+            system_prompt=prompt,
+        )
+        result = await child.run(task)
+        return f"[Sub-agent result]\n{result}"
+
     def _emit(self, event: str, *args):
         cb = self._callbacks.get(event)
         if cb:
@@ -267,6 +333,10 @@ Rules:
     async def _execute_tool(self, name: str, args: dict) -> str:
         if name == "note":
             return tool_note(self.memory, args.get("text", ""))
+        if name == "delegate":
+            return await self._run_subagent(
+                args.get("task", ""), args.get("context", "")
+            )
         handler = TOOL_HANDLERS.get(name)
         if not handler:
             return f"error: unknown tool: {name}"

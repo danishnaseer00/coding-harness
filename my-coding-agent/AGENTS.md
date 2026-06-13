@@ -1,9 +1,24 @@
-# Project Conventions
+# AGENTS.md
 
-- Python 3.10+ with async/await throughout
+## Project
+Coding Harness — a Python async agent framework with streaming, multi-provider LLM support, and a prompt_toolkit/Rich TUI.
+
+## Tech Stack
+- Python 3.10+, async/await throughout
+- prompt_toolkit for async REPL input with history
+- Rich for terminal output (Panels, Tables, styled text)
+- anthropic + openai SDKs for LLM providers
+
+## Conventions
 - Type hints on all function signatures
-- No external state mutation — tools return strings
-- Tool output clipped to 4000 chars before storing in history
-- Session saved to disk after every turn
-- Subagents are read-only with max 5 steps
-- Provider-agnostic design — add new providers via BaseProvider
+- No comments unless the code cannot be made self-explanatory
+- Tools return strings (never mutate external state)
+
+## Commands
+- Run: `python my-coding-agent/cli.py`
+- Lint: `ruff check my-coding-agent/`
+- Typecheck: `mypy my-coding-agent/`
+
+## Boundaries
+- Never modify files outside `my-coding-agent/`
+- Never add new dependencies without confirmation

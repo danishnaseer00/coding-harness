@@ -87,6 +87,18 @@ TOOLS = [
             },
             "required": ["text"]
         }
+    },
+    {
+        "name": "delegate",
+        "description": "Spawn a read-only sub-agent for a focused subtask. The sub-agent can explore, read, and search but cannot write files or run commands. Use for independent research, subtask investigation, or parallel exploration.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "The specific subtask to complete"},
+                "context": {"type": "string", "description": "Background information or context the sub-agent needs"}
+            },
+            "required": ["task"]
+        }
     }
 ]
 
