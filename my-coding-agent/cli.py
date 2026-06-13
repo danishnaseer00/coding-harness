@@ -1,15 +1,12 @@
 import argparse
 import asyncio
 import re
-import signal
 from pathlib import Path
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import FuzzyWordCompleter
 from prompt_toolkit.history import FileHistory
-from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -23,6 +20,15 @@ console = Console()
 HISTORY_PATH = Path.home() / ".coding-harness" / "history"
 
 SLASH_COMMANDS = ["/help", "/exit", "/model", "/providers", "/clear", "/resume"]
+
+SLASH_HELP = {
+    "/help": "Show all commands",
+    "/model": "Show or change model",
+    "/providers": "List available providers",
+    "/clear": "Clear conversation history",
+    "/resume [id]": "Resume a session",
+    "/exit": "Exit the application",
+}
 
 API_KEY_PROVIDERS = [
     (re.compile(r"^sk-ant-"), "anthropic"),
@@ -81,15 +87,7 @@ def print_slash_menu():
     table = Table(title="Slash Commands", show_header=True, header_style="bold cyan")
     table.add_column("Command", style="bold yellow")
     table.add_column("Description", style="dim")
-    commands = [
-        ("/help", "Show all commands"),
-        ("/model", "Show or change model"),
-        ("/providers", "List available providers"),
-        ("/clear", "Clear conversation history"),
-        ("/resume [id]", "Resume a session"),
-        ("/exit", "Exit the application"),
-    ]
-    for cmd, desc in commands:
+    for cmd, desc in SLASH_HELP.items():
         table.add_row(cmd, desc)
     console.print(table)
 
@@ -140,7 +138,7 @@ class Harness:
 
             print_user(text)
 
-            stream_buffer = [""]
+            buf = ""
             thinking_shown = False
 
             def on_thinking():
@@ -149,11 +147,11 @@ class Harness:
                 console.print("[bold yellow]Thinking...[/bold yellow]", end="")
 
             def on_stream_text(token: str):
-                nonlocal thinking_shown
+                nonlocal buf, thinking_shown
                 if thinking_shown:
                     console.print()
                     thinking_shown = False
-                stream_buffer[0] += token
+                buf += token
                 console.print(token, end="")
 
             def on_assistant_text(full_text: str):
@@ -163,13 +161,13 @@ class Harness:
                     thinking_shown = False
 
             def on_tool_call(name: str, args: dict):
-                nonlocal thinking_shown
+                nonlocal buf, thinking_shown
                 if thinking_shown:
                     console.print("[bold yellow]Thinking...[/bold yellow]")
                     thinking_shown = False
-                if stream_buffer[0]:
+                if buf:
                     console.print()
-                    stream_buffer[0] = ""
+                    buf = ""
                 print_tool_call(name, args)
 
             def on_tool_result(name: str, result: str, duration: float):

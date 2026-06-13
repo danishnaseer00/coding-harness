@@ -1,5 +1,4 @@
 import asyncio
-import subprocess
 from pathlib import Path
 
 

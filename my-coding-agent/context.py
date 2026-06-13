@@ -1,48 +1,8 @@
-from tools import TOOL_HANDLERS
-
-
-def clip(text: str, limit: int = 4000) -> str:
+def clip(text: str, limit: int = 1500) -> str:
     if len(text) <= limit:
         return text
     half = limit // 2
     return text[:half] + f"\n... [{len(text) - limit} chars omitted] ...\n" + text[-half:]
-
-
-def history_text(history: list, max_chars: int = 12000) -> str:
-    if not history:
-        return ""
-
-    recent = history[-6:]
-    older = history[:-6]
-
-    parts = []
-
-    for entry in older:
-        role = entry["role"]
-        content = clip(str(entry.get("content", "")), limit=500)
-        parts.append(f"[{role}]: {content}")
-
-    for entry in recent:
-        role = entry["role"]
-        content = clip(str(entry.get("content", "")), limit=2000)
-        parts.append(f"[{role}]: {content}")
-
-    result = "\n\n".join(parts)
-    return clip(result, max_chars)
-
-
-def deduplicate_reads(history: list) -> list:
-    seen_files = set()
-    result = []
-    for entry in history:
-        if entry.get("tool") == "read_file":
-            path = entry.get("args", {}).get("path")
-            if path in seen_files:
-                entry = {**entry, "content": f"(read of {path} deduplicated)"}
-            else:
-                seen_files.add(path)
-        result.append(entry)
-    return result
 
 
 async def summarize_old_messages(messages: list, provider) -> list:

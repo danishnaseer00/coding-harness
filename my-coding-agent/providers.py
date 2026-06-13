@@ -75,6 +75,69 @@ class BaseProvider(ABC):
         ...
 
 
+def _to_openai_messages(messages: list, system_prompt: str | None = None) -> list:
+    """Convert internal message format to OpenAI-compatible API format."""
+    result = []
+    if system_prompt:
+        result.append({"role": "system", "content": system_prompt})
+    for m in messages:
+        role = m.get("role", "user")
+        content = m.get("content", "")
+
+        if role == "assistant" and isinstance(content, list):
+            text_parts = []
+            tool_calls = []
+            for item in content:
+                if isinstance(item, dict):
+                    if item.get("type") == "text":
+                        text_parts.append(item.get("text", ""))
+                    elif item.get("type") == "tool_use":
+                        tool_calls.append({
+                            "id": item.get("id", ""),
+                            "type": "function",
+                            "function": {
+                                "name": item.get("name", ""),
+                                "arguments": json.dumps(item.get("input", {}))
+                            }
+                        })
+            msg = {"role": "assistant"}
+            if tool_calls:
+                msg["content"] = "\n".join(text_parts) if text_parts else None
+                msg["tool_calls"] = tool_calls
+            else:
+                msg["content"] = "\n".join(text_parts) if text_parts else ""
+            result.append(msg)
+
+        elif role == "user" and isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "tool_result":
+                    tool_call_id = item.get("tool_use_id") or item.get("id", "")
+                    result.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": str(item.get("content", ""))
+                    })
+
+        else:
+            result.append({"role": role, "content": str(content)})
+    return result
+
+
+def _to_openai_tools(tools: list) -> list:
+    """Convert internal tool format to OpenAI-compatible function tools."""
+    result = []
+    for t in tools:
+        result.append({
+            "type": "function",
+            "function": {
+                "name": t["name"],
+                "description": t["description"],
+                "parameters": t["input_schema"]
+            }
+        })
+    return result
+
+
 class AnthropicProvider(BaseProvider):
     name = "anthropic"
 
@@ -229,58 +292,8 @@ class OpenAICompatibleProvider(BaseProvider):
         return self._client
 
     async def send(self, messages: list, system_prompt: str, tools: list) -> ProviderResponse:
-        api_tools = []
-        for t in tools:
-            api_tools.append({
-                "type": "function",
-                "function": {
-                    "name": t["name"],
-                    "description": t["description"],
-                    "parameters": t["input_schema"]
-                }
-            })
-
-        api_messages = [{"role": "system", "content": system_prompt}]
-        for m in messages:
-            role = m.get("role", "user")
-            content = m.get("content", "")
-
-            if role == "assistant" and isinstance(content, list):
-                text_parts = []
-                tool_calls = []
-                for item in content:
-                    if isinstance(item, dict):
-                        if item.get("type") == "text":
-                            text_parts.append(item.get("text", ""))
-                        elif item.get("type") == "tool_use":
-                            tool_calls.append({
-                                "id": item.get("id", ""),
-                                "type": "function",
-                                "function": {
-                                    "name": item.get("name", ""),
-                                    "arguments": json.dumps(item.get("input", {}))
-                                }
-                            })
-                msg = {"role": "assistant"}
-                if tool_calls:
-                    msg["content"] = "\n".join(text_parts) if text_parts else None
-                    msg["tool_calls"] = tool_calls
-                else:
-                    msg["content"] = "\n".join(text_parts) if text_parts else ""
-                api_messages.append(msg)
-
-            elif role == "user" and isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "tool_result":
-                        tool_call_id = item.get("tool_use_id") or item.get("id", "")
-                        api_messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call_id,
-                            "content": str(item.get("content", ""))
-                        })
-
-            else:
-                api_messages.append({"role": role, "content": str(content)})
+        api_tools = _to_openai_tools(tools)
+        api_messages = _to_openai_messages(messages, system_prompt)
 
         kwargs = {
             "model": self.model,
@@ -297,33 +310,8 @@ class OpenAICompatibleProvider(BaseProvider):
             )
         except Exception as e:
             err = str(e)
-            
-            # Log debugging info
             import sys
             print(f"\n❌ OpenAI-Compatible API Error: {err[:200]}", file=sys.stderr)
-            print(f"   Messages: {len(api_messages)} total", file=sys.stderr)
-            if api_messages:
-                print(f"   Message types: {[m.get('role') for m in api_messages]}", file=sys.stderr)
-                last = api_messages[-1]
-                if last.get("role") == "tool":
-                    print(f"   Last msg: tool result (id={last.get('tool_call_id')})", file=sys.stderr)
-                elif isinstance(last.get("content"), list):
-                    print(f"   Last msg: user with blocks {[b.get('type') for b in last['content']]}", file=sys.stderr)
-            
-            if "tool_use_failed" in err:
-                kwargs_no_tools = {k: v for k, v in kwargs.items() if k != "tools"}
-                try:
-                    retry = await self.client.chat.completions.create(**kwargs_no_tools)
-                    text = retry.choices[0].message.content or ""
-                    return ProviderResponse(
-                        content=[ContentBlock(type="text", text=text)],
-                        stop_reason="end_turn"
-                    )
-                except Exception:
-                    return ProviderResponse(
-                        content=[ContentBlock(type="text", text=f"(tool call failed, try a simpler request)")],
-                        stop_reason="end_turn"
-                    )
             return ProviderResponse(
                 content=[ContentBlock(type="text", text=f"provider error: {err[:300]}")],
                 stop_reason="end_turn"
@@ -355,58 +343,8 @@ class OpenAICompatibleProvider(BaseProvider):
         return ProviderResponse(content=blocks, stop_reason=stop)
 
     async def send_stream(self, messages: list, system_prompt: str, tools: list):
-        api_tools = []
-        for t in tools:
-            api_tools.append({
-                "type": "function",
-                "function": {
-                    "name": t["name"],
-                    "description": t["description"],
-                    "parameters": t["input_schema"]
-                }
-            })
-
-        api_messages = [{"role": "system", "content": system_prompt}]
-        for m in messages:
-            role = m.get("role", "user")
-            content = m.get("content", "")
-
-            if role == "assistant" and isinstance(content, list):
-                text_parts = []
-                tool_calls = []
-                for item in content:
-                    if isinstance(item, dict):
-                        if item.get("type") == "text":
-                            text_parts.append(item.get("text", ""))
-                        elif item.get("type") == "tool_use":
-                            tool_calls.append({
-                                "id": item.get("id", ""),
-                                "type": "function",
-                                "function": {
-                                    "name": item.get("name", ""),
-                                    "arguments": json.dumps(item.get("input", {}))
-                                }
-                            })
-                msg = {"role": "assistant"}
-                if tool_calls:
-                    msg["content"] = "\n".join(text_parts) if text_parts else None
-                    msg["tool_calls"] = tool_calls
-                else:
-                    msg["content"] = "\n".join(text_parts) if text_parts else ""
-                api_messages.append(msg)
-
-            elif role == "user" and isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "tool_result":
-                        tool_call_id = item.get("tool_use_id") or item.get("id", "")
-                        api_messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call_id,
-                            "content": str(item.get("content", ""))
-                        })
-
-            else:
-                api_messages.append({"role": role, "content": str(content)})
+        api_tools = _to_openai_tools(tools)
+        api_messages = _to_openai_messages(messages, system_prompt)
 
         kwargs = {
             "model": self.model,
@@ -420,7 +358,6 @@ class OpenAICompatibleProvider(BaseProvider):
 
         try:
             collected = {}
-            text_accumulator = ""
             final_reason = "end_turn"
 
             response = await self.client.chat.completions.create(**kwargs)
@@ -431,7 +368,6 @@ class OpenAICompatibleProvider(BaseProvider):
                 finish = chunk.choices[0].finish_reason
 
                 if delta and delta.content:
-                    text_accumulator += delta.content
                     yield StreamEvent(type="text", text=delta.content)
 
                 if delta and delta.tool_calls:
@@ -559,58 +495,8 @@ class OllamaProvider(BaseProvider):
         return self._client
 
     async def send(self, messages: list, system_prompt: str, tools: list) -> ProviderResponse:
-        api_tools = []
-        for t in tools:
-            api_tools.append({
-                "type": "function",
-                "function": {
-                    "name": t["name"],
-                    "description": t["description"],
-                    "parameters": t["input_schema"]
-                }
-            })
-
-        api_messages = [{"role": "system", "content": system_prompt}]
-        for m in messages:
-            role = m.get("role", "user")
-            content = m.get("content", "")
-
-            if role == "assistant" and isinstance(content, list):
-                text_parts = []
-                tool_calls = []
-                for item in content:
-                    if isinstance(item, dict):
-                        if item.get("type") == "text":
-                            text_parts.append(item.get("text", ""))
-                        elif item.get("type") == "tool_use":
-                            tool_calls.append({
-                                "id": item.get("id", ""),
-                                "type": "function",
-                                "function": {
-                                    "name": item.get("name", ""),
-                                    "arguments": json.dumps(item.get("input", {}))
-                                }
-                            })
-                msg = {"role": "assistant"}
-                if tool_calls:
-                    msg["content"] = "\n".join(text_parts) if text_parts else None
-                    msg["tool_calls"] = tool_calls
-                else:
-                    msg["content"] = "\n".join(text_parts) if text_parts else ""
-                api_messages.append(msg)
-
-            elif role == "user" and isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "tool_result":
-                        tool_call_id = item.get("tool_use_id") or item.get("id", "")
-                        api_messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call_id,
-                            "content": str(item.get("content", ""))
-                        })
-
-            else:
-                api_messages.append({"role": role, "content": str(content)})
+        api_tools = _to_openai_tools(tools)
+        api_messages = _to_openai_messages(messages, system_prompt)
 
         kwargs = {
             "model": self.model,
@@ -628,7 +514,6 @@ class OllamaProvider(BaseProvider):
         except Exception as e:
             import sys
             print(f"\n❌ Ollama API Error: {e}", file=sys.stderr)
-            print(f"   Messages: {len(api_messages)} total", file=sys.stderr)
             return ProviderResponse(
                 content=[ContentBlock(type="text", text=f"error: ollama request failed: {e}")],
                 stop_reason="end_turn"
@@ -658,58 +543,8 @@ class OllamaProvider(BaseProvider):
         return ProviderResponse(content=blocks, stop_reason=stop)
 
     async def send_stream(self, messages: list, system_prompt: str, tools: list):
-        api_tools = []
-        for t in tools:
-            api_tools.append({
-                "type": "function",
-                "function": {
-                    "name": t["name"],
-                    "description": t["description"],
-                    "parameters": t["input_schema"]
-                }
-            })
-
-        api_messages = [{"role": "system", "content": system_prompt}]
-        for m in messages:
-            role = m.get("role", "user")
-            content = m.get("content", "")
-
-            if role == "assistant" and isinstance(content, list):
-                text_parts = []
-                tool_calls = []
-                for item in content:
-                    if isinstance(item, dict):
-                        if item.get("type") == "text":
-                            text_parts.append(item.get("text", ""))
-                        elif item.get("type") == "tool_use":
-                            tool_calls.append({
-                                "id": item.get("id", ""),
-                                "type": "function",
-                                "function": {
-                                    "name": item.get("name", ""),
-                                    "arguments": json.dumps(item.get("input", {}))
-                                }
-                            })
-                msg = {"role": "assistant"}
-                if tool_calls:
-                    msg["content"] = "\n".join(text_parts) if text_parts else None
-                    msg["tool_calls"] = tool_calls
-                else:
-                    msg["content"] = "\n".join(text_parts) if text_parts else ""
-                api_messages.append(msg)
-
-            elif role == "user" and isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "tool_result":
-                        tool_call_id = item.get("tool_use_id") or item.get("id", "")
-                        api_messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call_id,
-                            "content": str(item.get("content", ""))
-                        })
-
-            else:
-                api_messages.append({"role": role, "content": str(content)})
+        api_tools = _to_openai_tools(tools)
+        api_messages = _to_openai_messages(messages, system_prompt)
 
         kwargs = {
             "model": self.model,
@@ -722,7 +557,6 @@ class OllamaProvider(BaseProvider):
 
         try:
             collected = {}
-            text_accumulator = ""
             final_reason = "end_turn"
 
             response = await self.client.chat.completions.create(**kwargs)
@@ -733,7 +567,6 @@ class OllamaProvider(BaseProvider):
                 finish = chunk.choices[0].finish_reason
 
                 if delta and delta.content:
-                    text_accumulator += delta.content
                     yield StreamEvent(type="text", text=delta.content)
 
                 if delta and delta.tool_calls:

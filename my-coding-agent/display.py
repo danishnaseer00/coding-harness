@@ -49,14 +49,3 @@ def print_tool_result(name: str, result: str, duration: float = 0):
 
 def print_error(msg: str):
     print(f"  {red('x')} {msg}", file=sys.stderr)
-
-
-def print_system(msg: str):
-    print(f"  {dim('::')} {dim(msg)}")
-
-
-def print_banner():
-    print()
-    print(f"  {bold('Coding Harness')} {dim('v0.1.0')}")
-    print(f"  {dim('Type /help for commands, /exit to quit')}")
-    print()

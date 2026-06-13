@@ -54,7 +54,6 @@ class Agent:
         self.memory = {"task": "", "files": [], "notes": []}
         self._callbacks = callbacks or {}
         self._step_count = 0
-        self._streaming_text = ""
         self._streaming_failed = False
 
         self.workspace = WorkspaceContext(cwd=cwd)
@@ -111,7 +110,7 @@ Rules:
             system = self._build_system()
             self._emit("thinking")
 
-            self._streaming_text = ""
+            streaming_text = ""
             tool_calls = []
             stop_reason = "end_turn"
             stream_iter = None
@@ -119,12 +118,12 @@ Rules:
             try:
                 if self._streaming_failed:
                     response = await self.provider.send(self.messages, system, TOOLS)
-                    self._streaming_text = response.text
+                    streaming_text = response.text
                     tool_calls = [b for b in response.content if b.type == "tool_use"]
                     stop_reason = response.stop_reason
-                    if self._streaming_text:
-                        self._emit("stream_text", self._streaming_text)
-                        self._emit("assistant_text", self._streaming_text)
+                    if streaming_text:
+                        self._emit("stream_text", streaming_text)
+                        self._emit("assistant_text", streaming_text)
                 else:
                     stream_iter = self.provider.send_stream(self.messages, system, TOOLS)
                     while True:
@@ -133,7 +132,7 @@ Rules:
                         except StopAsyncIteration:
                             break
                         if event.type == "text":
-                            self._streaming_text += event.text
+                            streaming_text += event.text
                             self._emit("stream_text", event.text)
                         elif event.type == "tool_call" and event.tool_call:
                             tool_calls.append(event.tool_call)
@@ -149,12 +148,12 @@ Rules:
                         pass
                 try:
                     response = await self.provider.send(self.messages, system, TOOLS)
-                    self._streaming_text = response.text
+                    streaming_text = response.text
                     tool_calls = [b for b in response.content if b.type == "tool_use"]
                     stop_reason = response.stop_reason
-                    if self._streaming_text:
-                        self._emit("stream_text", self._streaming_text)
-                        self._emit("assistant_text", self._streaming_text)
+                    if streaming_text:
+                        self._emit("stream_text", streaming_text)
+                        self._emit("assistant_text", streaming_text)
                 except Exception as e2:
                     error_msg = f"provider error: {e2}"
                     self._emit("error", error_msg)
@@ -173,24 +172,24 @@ Rules:
                 continue
 
             assistant_blocks = []
-            if self._streaming_text:
-                assistant_blocks.append({"type": "text", "text": self._streaming_text})
+            if streaming_text:
+                assistant_blocks.append({"type": "text", "text": streaming_text})
             for tc in tool_calls:
                 assistant_blocks.append({
                     "type": "tool_use", "id": tc.id,
                     "name": tc.name, "input": tc.input
                 })
 
-            if self._streaming_text:
-                self._emit("assistant_text", self._streaming_text)
+            if streaming_text:
+                self._emit("assistant_text", streaming_text)
 
             self.messages.append({"role": "assistant", "content": assistant_blocks or ""})
-            display_text = self._streaming_text or "(tool call)"
+            display_text = streaming_text or "(tool call)"
             if self.session_store:
                 self.session_store.record("assistant", display_text)
 
             if stop_reason == "end_turn":
-                return self._streaming_text
+                return streaming_text
 
             if stop_reason == "max_tokens":
                 self.messages.append({
@@ -217,7 +216,7 @@ Rules:
                         elif not approve(name, args, self.approval_policy):
                             result = f"error: {name} was denied by user"
                             self._emit("error", result)
-                        elif self.read_only and name in ("write_file", "patch_file", "run_shell"):
+                        elif self.read_only and name in RISKY_TOOLS:
                             result = f"error: {name} is not allowed for sub-agents (read-only mode)"
                             self._emit("error", result)
                         else:
