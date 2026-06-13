@@ -108,19 +108,27 @@ The following rules are enforced at the code level. You cannot bypass them.
 3. If the conversation becomes long, old messages may be summarized. Key information should be in notes, not buried in history."""
 
 
-def load_soul(cwd: str | None = None) -> str:
-    for base in ([Path(cwd).resolve()] if cwd else []) + [Path(__file__).parent]:
-        p = base / "SOUL.md"
+def _first_existing(base: Path, *names: str) -> str | None:
+    for name in names:
+        p = base / name
         if p.exists():
             return p.read_text()
+    return None
+
+
+def load_soul(cwd: str | None = None) -> str:
+    for base in ([Path(cwd).resolve()] if cwd else []) + [Path(__file__).parent]:
+        result = _first_existing(base, "SOUL.md", "soul.md")
+        if result is not None:
+            return result
     return SOUL_DEFAULT
 
 
 def load_agents_md(cwd: str | None = None) -> str:
     for base in ([Path(cwd).resolve()] if cwd else []) + [Path(__file__).parent]:
-        p = base / "AGENTS.md"
-        if p.exists():
-            return p.read_text()
+        result = _first_existing(base, "AGENTS.md", "agents.md")
+        if result is not None:
+            return result
     return AGENTS_DEFAULT
 
 
@@ -130,9 +138,9 @@ def _load_system_template(cwd: str | None = None) -> str:
         bases.append(Path(cwd).resolve())
     bases.append(Path(__file__).parent)
     for base in bases:
-        p = base / "SYSTEM_PROMPT.md"
-        if p.exists():
-            return p.read_text()
+        result = _first_existing(base, "SYSTEM_PROMPT.md", "system_prompt.md", "system-prompt.md")
+        if result is not None:
+            return result
     return SYSTEM_PROMPT_DEFAULT
 
 
