@@ -19,14 +19,15 @@ from providers import PROVIDER_REGISTRY, create_provider, load_config, save_conf
 console = Console()
 HISTORY_PATH = Path.home() / ".coding-harness" / "history"
 
-SLASH_COMMANDS = ["/help", "/exit", "/model", "/providers", "/clear", "/resume"]
+SLASH_COMMANDS = ["/help", "/exit", "/model", "/providers", "/clear", "/resume", "/sessions"]
 
 SLASH_HELP = {
     "/help": "Show all commands",
     "/model": "Show or change model",
     "/providers": "List available providers",
     "/clear": "Clear conversation history",
-    "/resume [id]": "Resume a session",
+    "/resume [id]": "Resume a session (or /resume to pick from list)",
+    "/sessions": "List sessions for this project",
     "/exit": "Exit the application",
 }
 
@@ -266,8 +267,29 @@ class Harness:
             return
 
         if command == "resume":
-            sid = parts[1] if len(parts) > 1 else "latest"
+            sid = parts[1] if len(parts) > 1 else ""
+            if not sid:
+                sessions = SessionStore.list_sessions(self.agent.cwd)
+                if not sessions:
+                    print_error("No sessions for this project")
+                    return
+                console.print("[bold]Sessions for this project:[/bold]")
+                for i, s in enumerate(sessions, 1):
+                    date = s.get("created", "")[:10]
+                    print(f"  [{i}] {s['id']}  {date}  {s['summary'][:80]}")
+                console.print("\n[dim]Run /resume &lt;id&gt; or /resume &lt;number&gt; to resume[/dim]")
+                return
             try:
+                if sid.isdigit():
+                    sessions = SessionStore.list_sessions(self.agent.cwd)
+                    if not sessions:
+                        print_error("No sessions for this project")
+                        return
+                    idx = int(sid) - 1
+                    if idx < 0 or idx >= len(sessions):
+                        print_error(f"Invalid number. Pick 1-{len(sessions)}")
+                        return
+                    sid = sessions[idx]["id"]
                 store = SessionStore.resume(sid)
                 self.agent.messages = store.data.get("history", [])
                 self.agent.memory = store.data.get("memory", {"task": "", "files": [], "notes": []})
@@ -275,6 +297,22 @@ class Harness:
                 print_system(f"Resumed session {store.session_id} ({len(self.agent.messages)} turns)")
             except FileNotFoundError:
                 print_error(f"Session not found: {sid}")
+            return
+
+        if command == "sessions":
+            sessions = SessionStore.list_sessions(self.agent.cwd)
+            if not sessions:
+                print_system("No sessions for this project")
+                return
+            table = Table(title=f"Sessions for {Path(self.agent.cwd).name}", show_header=True)
+            table.add_column("#", style="bold")
+            table.add_column("ID", style="dim")
+            table.add_column("Date", style="cyan")
+            table.add_column("Turns", style="yellow")
+            table.add_column("Summary", style="white")
+            for i, s in enumerate(sessions, 1):
+                table.add_row(str(i), s["id"], s.get("created", "")[:10], str(s["turns"]), s["summary"][:60])
+            console.print(table)
             return
 
         print_error(f"Unknown: {command}. Try /help")
@@ -296,9 +334,9 @@ def main():
             session_store = SessionStore.resume(args.resume)
         except FileNotFoundError:
             console.print(f"[yellow]Session not found: {args.resume}. Starting fresh.[/yellow]")
-            session_store = SessionStore()
+            session_store = SessionStore(project_path=args.cwd)
     else:
-        session_store = SessionStore()
+        session_store = SessionStore(project_path=args.cwd)
 
     agent = Agent(
         cwd=args.cwd,

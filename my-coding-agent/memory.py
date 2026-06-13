@@ -66,13 +66,15 @@ class WorkspaceContext:
 
 
 class SessionStore:
-    def __init__(self, session_id: str | None = None):
+    def __init__(self, session_id: str | None = None, project_path: str | None = None):
         SESSION_DIR.mkdir(parents=True, exist_ok=True)
         self.session_id = session_id or str(uuid.uuid4())[:8]
         self.path = SESSION_DIR / f"{self.session_id}.json"
         self.data = {
             "id": self.session_id,
             "created": datetime.now().isoformat(),
+            "project": str(Path(project_path).resolve()) if project_path else "",
+            "summary": "",
             "memory": {"task": "", "files": [], "notes": []},
             "history": []
         }
@@ -86,6 +88,8 @@ class SessionStore:
             entry["tool"] = tool
             entry["args"] = args or {}
         self.data["history"].append(entry)
+        if role == "user" and not self.data["summary"] and content:
+            self.data["summary"] = content[:120].replace("\n", " ")
         self.save()
 
     @property
@@ -95,6 +99,25 @@ class SessionStore:
     @memory.setter
     def memory(self, value: dict):
         self.data["memory"] = value
+
+    @classmethod
+    def list_sessions(cls, project_path: str) -> list[dict]:
+        SESSION_DIR.mkdir(parents=True, exist_ok=True)
+        resolved = str(Path(project_path).resolve())
+        sessions = []
+        for p in sorted(SESSION_DIR.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True):
+            try:
+                data = json.loads(p.read_text())
+            except Exception:
+                continue
+            if data.get("project", "") == resolved:
+                sessions.append({
+                    "id": data["id"],
+                    "created": data.get("created", ""),
+                    "summary": data.get("summary", "") or "(no summary)",
+                    "turns": len(data.get("history", [])),
+                })
+        return sessions
 
     @classmethod
     def resume(cls, session_id: str = "latest") -> "SessionStore":
