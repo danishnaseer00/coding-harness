@@ -119,10 +119,15 @@ class Agent:
 
     def _trim_messages(self):
         while len(self.messages) > MAX_MESSAGES:
-            if len(self.messages) > 2:
-                self.messages.pop(1)
-            else:
+            idx = 1
+            if idx >= len(self.messages):
                 break
+            content = self.messages[idx].get("content", "")
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "tool_result":
+                        return
+            self.messages.pop(idx)
 
     async def run(self, user_message: str) -> str:
         self.messages.append({"role": "user", "content": user_message})

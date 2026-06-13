@@ -9,8 +9,17 @@ async def summarize_old_messages(messages: list, provider) -> list:
     if len(messages) <= 20:
         return messages
 
-    to_summarize = messages[:10]
-    keep = messages[10:]
+    split = 10
+    for i in range(split - 1, -1, -1):
+        content = messages[i].get("content", "")
+        if isinstance(content, list):
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "tool_result":
+                    split = max(split, i + 2)
+                    break
+
+    to_summarize = messages[:split]
+    keep = messages[split:]
 
     summary_text = "\n".join(
         f"[{m['role']}]: {str(m.get('content', ''))[:200]}"

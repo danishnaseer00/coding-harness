@@ -80,6 +80,9 @@ def _to_openai_messages(messages: list, system_prompt: str | None = None) -> lis
     result = []
     if system_prompt:
         result.append({"role": "system", "content": system_prompt})
+
+    seen_tool_call_ids: set[str] = set()
+
     for m in messages:
         role = m.get("role", "user")
         content = m.get("content", "")
@@ -92,8 +95,11 @@ def _to_openai_messages(messages: list, system_prompt: str | None = None) -> lis
                     if item.get("type") == "text":
                         text_parts.append(item.get("text", ""))
                     elif item.get("type") == "tool_use":
+                        cid = item.get("id", "")
+                        if cid:
+                            seen_tool_call_ids.add(cid)
                         tool_calls.append({
-                            "id": item.get("id", ""),
+                            "id": cid,
                             "type": "function",
                             "function": {
                                 "name": item.get("name", ""),
@@ -112,6 +118,10 @@ def _to_openai_messages(messages: list, system_prompt: str | None = None) -> lis
             for item in content:
                 if isinstance(item, dict) and item.get("type") == "tool_result":
                     tool_call_id = item.get("tool_use_id") or item.get("id", "")
+                    if tool_call_id and tool_call_id not in seen_tool_call_ids:
+                        import sys
+                        print(f"\n[warning] dropping orphaned tool_result (id={tool_call_id}) — no matching assistant tool_use found in history\n", file=sys.stderr)
+                        continue
                     result.append({
                         "role": "tool",
                         "tool_call_id": tool_call_id,
