@@ -5,6 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "coding-harness"
 version = "0.1.0"
+description = "An AI coding agent harness with streaming, multi-provider LLM support, and a terminal UI"
+readme = "README.md"
+license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
     "prompt_toolkit>=3.0.0",
@@ -19,3 +22,7 @@ harness = "cli:main"
 
 [tool.setuptools]
 py-modules = ["cli", "agent", "tools", "memory", "context", "display", "providers", "guardrails", "eval"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+"*" = ["*.md"]

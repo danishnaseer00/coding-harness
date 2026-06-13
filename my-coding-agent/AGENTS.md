@@ -1,24 +1,75 @@
 # AGENTS.md
 
+Edit this file with your project details. The agent reads it at every session start.
+
 ## Project
-Coding Harness — a Python async agent framework with streaming, multi-provider LLM support, and a prompt_toolkit/Rich TUI.
+<!-- One-line description of what this project does -->
+-
 
 ## Tech Stack
-- Python 3.10+, async/await throughout
-- prompt_toolkit for async REPL input with history
-- Rich for terminal output (Panels, Tables, styled text)
-- anthropic + openai SDKs for LLM providers
+<!-- List exact versions and frameworks. Be specific — the agent uses this to write correct code. -->
 
-## Conventions
-- Type hints on all function signatures
-- No comments unless the code cannot be made self-explanatory
-- Tools return strings (never mutate external state)
+### Languages / Runtimes
+-
+### Framework
+-
+### Database
+-
+### Testing
+-
+### CI / CD
+-
+
+## Repository Structure
+<!-- Describe the directory layout so the agent knows where to find things -->
+-
+-
+-
+
+## Code Conventions
+<!-- Every rule here should prevent a specific class of bugs or review comments -->
+
+### Style
+-
+### Naming
+-
+### Imports / Exports
+-
+### Error Handling
+-
+### Configuration
+-
 
 ## Commands
-- Run: `python my-coding-agent/cli.py`
-- Lint: `ruff check my-coding-agent/`
-- Typecheck: `mypy my-coding-agent/`
+<!-- Exact commands the agent should run. One per line, with description. -->
+
+| Action | Command |
+|--------|---------|
+| Run | ` ` |
+| Test (all) | ` ` |
+| Test (single) | ` ` |
+| Lint | ` ` |
+| Typecheck | ` ` |
+| Build | ` ` |
+| Format | ` ` |
 
 ## Boundaries
-- Never modify files outside `my-coding-agent/`
-- Never add new dependencies without confirmation
+<!-- Files, directories, and operations the agent must never touch -->
+
+-
+-
+-
+
+## Common Patterns
+<!-- Code snippets or patterns the agent should follow. Use for repetitive but important patterns. -->
+
+### Example: Adding a new API endpoint
+```
+
+
+
+### Example: Adding a new test
+```
+
+
+```
