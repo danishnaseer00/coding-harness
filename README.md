@@ -22,14 +22,29 @@ An AI coding agent that runs in your terminal — streams responses, executes to
 - An API key from any supported provider
 
 ### Install
-Run `pip install -e .` at the repo root to install the `harness` command in editable mode. Changes to source files take effect immediately.
+
+```bash
+# Clone the repo
+git clone https://github.com/danishnaseer00/coding-harness.git
+cd coding-harness
+
+# Install the harness command
+pip install -e .
+```
+
+This installs the `harness` command globally in editable mode — any changes you make to the source files take effect immediately.
 
 ### Verify
 Run `harness --help` to confirm installation.
 
 ## Quick Start
 
-Run `harness --cwd .` in your project directory. On first run, paste your API key at the prompt — it auto-detects the provider.
+```bash
+cd /path/to/your/project
+harness --cwd .
+```
+
+On first run, paste your API key at the prompt — it auto-detects the provider.
 
 ## Usage
 
