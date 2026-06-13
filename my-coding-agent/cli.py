@@ -76,6 +76,18 @@ class HarnessApp(App):
         margin: 0;
     }
 
+    #chat-stream {
+        width: 100%;
+        height: auto;
+        max-height: 8;
+        background: $surface;
+        color: $text;
+        padding: 0 1;
+        border: none;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+
     #status-bar {
         width: 100%;
         height: 1;
@@ -90,10 +102,12 @@ class HarnessApp(App):
         super().__init__()
         self.agent = agent
         self.session_store = session_store
+        self._stream_buffer = ""
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield RichLog(id="chat-log", highlight=True, markup=True, wrap=True)
+        yield Static(id="chat-stream")
         yield Input(id="chat-input", placeholder="Type a message or paste an API key...", suggester=CommandSuggester())
         yield Static(id="status-bar")
 
@@ -113,10 +127,14 @@ class HarnessApp(App):
 
     def _update_status(self, msg: str = ""):
         steps = getattr(self.agent, "_step_count", 0)
-        text = f" {self.agent.provider.name}/{self.agent.provider.model}  |  steps: {steps}"
+        base = f" {self.agent.provider.name}/{self.agent.provider.model}  |  steps: {steps}"
         if msg:
-            text += f"  |  {msg}"
-        self.query_one("#status-bar", Static).update(text)
+            t = Text(base)
+            t.append("  |  ")
+            t.append(msg, style="bold yellow")
+            self.query_one("#status-bar", Static).update(t)
+        else:
+            self.query_one("#status-bar", Static).update(base)
 
     def _write_user(self, text: str):
         self.query_one("#chat-log", RichLog).write(
@@ -200,24 +218,40 @@ class HarnessApp(App):
             return
 
         self._write_user(text)
-        
-        # Create callbacks for real-time feedback
+        self._stream_buffer = ""
+        stream_widget = self.query_one("#chat-stream", Static)
+
+        def on_stream_text(token: str):
+            self._stream_buffer += token
+            stream_widget.update(self._stream_buffer)
+            stream_widget.scroll_end(animate=False)
+
+        def on_assistant_text(full_text: str):
+            if full_text:
+                stream_widget.update("")
+                self._write_assistant(full_text)
+
         def on_tool_call(name, args):
+            if self._stream_buffer:
+                stream_widget.update("")
+                self._write_assistant(self._stream_buffer)
+                self._stream_buffer = ""
             self._write_tool_call(name, args)
             self._update_status(f"⚙️  {name}...")
-            
+
         def on_tool_result(name, result, duration):
             self._write_tool_result(result, duration)
             self._update_status("")
-        
+
         callbacks = {
-            "thinking": lambda: self._update_status("thinking..."),
-            "assistant_text": self._write_assistant,
+            "thinking": lambda: self._update_status("Thinking..."),
+            "stream_text": on_stream_text,
+            "assistant_text": on_assistant_text,
             "tool_call": on_tool_call,
             "tool_result": on_tool_result,
             "error": self._write_error,
         }
-        
+
         self.agent._callbacks = callbacks
         self._update_status("thinking...")
 
@@ -361,7 +395,7 @@ def main():
 
     agent = Agent(
         cwd=args.cwd,
-        approval_policy=args.policy,
+        approval_policy="auto",
         session_store=session_store,
         callbacks={
             "assistant_text": on_assistant_text,

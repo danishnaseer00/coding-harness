@@ -51,11 +51,23 @@ class ProviderResponse:
         return "\n".join(b.text for b in self.content if b.type == "text" and b.text)
 
 
+@dataclass
+class StreamEvent:
+    type: str = ""  # "text" | "tool_call" | "done"
+    text: str = ""
+    tool_call: ContentBlock | None = None
+    stop_reason: str = "end_turn"
+
+
 class BaseProvider(ABC):
     name: str = ""
 
     @abstractmethod
     async def send(self, messages: list, system_prompt: str, tools: list) -> ProviderResponse:
+        ...
+
+    @abstractmethod
+    async def send_stream(self, messages: list, system_prompt: str, tools: list):
         ...
 
     @abstractmethod
@@ -135,6 +147,56 @@ class AnthropicProvider(BaseProvider):
                 ))
 
         return ProviderResponse(content=blocks, stop_reason=response.stop_reason)
+
+    async def send_stream(self, messages: list, system_prompt: str, tools: list):
+        api_tools = []
+        for t in tools:
+            api_tools.append({
+                "name": t["name"],
+                "description": t["description"],
+                "input_schema": t["input_schema"]
+            })
+
+        api_messages = []
+        for m in messages:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+            if isinstance(content, list):
+                if all(isinstance(c, dict) and "type" in c for c in content):
+                    api_messages.append(m)
+                else:
+                    api_messages.append({"role": role, "content": str(content)})
+            else:
+                api_messages.append({"role": role, "content": str(content)})
+
+        try:
+            async with await self.client.messages.stream(
+                model=self.model,
+                max_tokens=8192,
+                system=system_prompt,
+                tools=api_tools,
+                messages=api_messages
+            ) as stream:
+                async for text in stream.text_stream:
+                    yield StreamEvent(type="text", text=text)
+
+                response = await stream.get_final_message()
+
+            for block in response.content:
+                if block.type == "tool_use":
+                    yield StreamEvent(
+                        type="tool_call",
+                        tool_call=ContentBlock(
+                            type="tool_use", id=block.id,
+                            name=block.name, input=block.input
+                        )
+                    )
+            yield StreamEvent(type="done", stop_reason=response.stop_reason)
+        except Exception as e:
+            import sys
+            print(f"\n❌ Anthropic Stream Error: {e}", file=sys.stderr)
+            yield StreamEvent(type="text", text=f"[stream error: {e}]")
+            yield StreamEvent(type="done", stop_reason="end_turn")
 
     def get_available_models(self) -> list[str]:
         return [
@@ -291,6 +353,130 @@ class OpenAICompatibleProvider(BaseProvider):
             stop = "max_tokens"
 
         return ProviderResponse(content=blocks, stop_reason=stop)
+
+    async def send_stream(self, messages: list, system_prompt: str, tools: list):
+        api_tools = []
+        for t in tools:
+            api_tools.append({
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t["description"],
+                    "parameters": t["input_schema"]
+                }
+            })
+
+        api_messages = [{"role": "system", "content": system_prompt}]
+        for m in messages:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+
+            if role == "assistant" and isinstance(content, list):
+                text_parts = []
+                tool_calls = []
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get("type") == "text":
+                            text_parts.append(item.get("text", ""))
+                        elif item.get("type") == "tool_use":
+                            tool_calls.append({
+                                "id": item.get("id", ""),
+                                "type": "function",
+                                "function": {
+                                    "name": item.get("name", ""),
+                                    "arguments": json.dumps(item.get("input", {}))
+                                }
+                            })
+                msg = {"role": "assistant"}
+                if tool_calls:
+                    msg["content"] = "\n".join(text_parts) if text_parts else None
+                    msg["tool_calls"] = tool_calls
+                else:
+                    msg["content"] = "\n".join(text_parts) if text_parts else ""
+                api_messages.append(msg)
+
+            elif role == "user" and isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "tool_result":
+                        tool_call_id = item.get("tool_use_id") or item.get("id", "")
+                        api_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": str(item.get("content", ""))
+                        })
+
+            else:
+                api_messages.append({"role": role, "content": str(content)})
+
+        kwargs = {
+            "model": self.model,
+            "max_tokens": 8192,
+            "messages": api_messages,
+            "stream": True,
+            "stream_options": {"include_usage": True}
+        }
+        if api_tools:
+            kwargs["tools"] = api_tools
+
+        try:
+            collected = {}
+            text_accumulator = ""
+            final_reason = "end_turn"
+
+            response = await self.client.chat.completions.create(**kwargs)
+            async for chunk in response:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                finish = chunk.choices[0].finish_reason
+
+                if delta and delta.content:
+                    text_accumulator += delta.content
+                    yield StreamEvent(type="text", text=delta.content)
+
+                if delta and delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        idx = tc.index
+                        if idx not in collected:
+                            collected[idx] = {"id": "", "name": "", "arguments": ""}
+                        if tc.id:
+                            collected[idx]["id"] = tc.id
+                        if tc.function:
+                            if tc.function.name:
+                                collected[idx]["name"] += tc.function.name
+                            if tc.function.arguments:
+                                collected[idx]["arguments"] += tc.function.arguments
+
+                if finish:
+                    if finish == "stop":
+                        final_reason = "end_turn"
+                    elif finish == "tool_calls":
+                        final_reason = "tool_use"
+                    elif finish == "length":
+                        final_reason = "max_tokens"
+
+            # Yield collected tool calls
+            for idx in sorted(collected.keys()):
+                tc = collected[idx]
+                try:
+                    args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+                except json.JSONDecodeError:
+                    args = {}
+                yield StreamEvent(
+                    type="tool_call",
+                    tool_call=ContentBlock(
+                        type="tool_use", id=tc["id"],
+                        name=tc["name"], input=args
+                    )
+                )
+
+            yield StreamEvent(type="done", stop_reason=final_reason)
+
+        except Exception as e:
+            import sys
+            print(f"\n❌ OpenAI Stream Error: {e}", file=sys.stderr)
+            yield StreamEvent(type="text", text=f"[stream error: {e}]")
+            yield StreamEvent(type="done", stop_reason="end_turn")
 
     def get_available_models(self) -> list[str]:
         return [
@@ -470,6 +656,128 @@ class OllamaProvider(BaseProvider):
             stop = "tool_use"
 
         return ProviderResponse(content=blocks, stop_reason=stop)
+
+    async def send_stream(self, messages: list, system_prompt: str, tools: list):
+        api_tools = []
+        for t in tools:
+            api_tools.append({
+                "type": "function",
+                "function": {
+                    "name": t["name"],
+                    "description": t["description"],
+                    "parameters": t["input_schema"]
+                }
+            })
+
+        api_messages = [{"role": "system", "content": system_prompt}]
+        for m in messages:
+            role = m.get("role", "user")
+            content = m.get("content", "")
+
+            if role == "assistant" and isinstance(content, list):
+                text_parts = []
+                tool_calls = []
+                for item in content:
+                    if isinstance(item, dict):
+                        if item.get("type") == "text":
+                            text_parts.append(item.get("text", ""))
+                        elif item.get("type") == "tool_use":
+                            tool_calls.append({
+                                "id": item.get("id", ""),
+                                "type": "function",
+                                "function": {
+                                    "name": item.get("name", ""),
+                                    "arguments": json.dumps(item.get("input", {}))
+                                }
+                            })
+                msg = {"role": "assistant"}
+                if tool_calls:
+                    msg["content"] = "\n".join(text_parts) if text_parts else None
+                    msg["tool_calls"] = tool_calls
+                else:
+                    msg["content"] = "\n".join(text_parts) if text_parts else ""
+                api_messages.append(msg)
+
+            elif role == "user" and isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "tool_result":
+                        tool_call_id = item.get("tool_use_id") or item.get("id", "")
+                        api_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call_id,
+                            "content": str(item.get("content", ""))
+                        })
+
+            else:
+                api_messages.append({"role": role, "content": str(content)})
+
+        kwargs = {
+            "model": self.model,
+            "max_tokens": 8192,
+            "messages": api_messages,
+            "stream": True,
+        }
+        if api_tools:
+            kwargs["tools"] = api_tools
+
+        try:
+            collected = {}
+            text_accumulator = ""
+            final_reason = "end_turn"
+
+            response = await self.client.chat.completions.create(**kwargs)
+            async for chunk in response:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                finish = chunk.choices[0].finish_reason
+
+                if delta and delta.content:
+                    text_accumulator += delta.content
+                    yield StreamEvent(type="text", text=delta.content)
+
+                if delta and delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        idx = tc.index
+                        if idx not in collected:
+                            collected[idx] = {"id": "", "name": "", "arguments": ""}
+                        if tc.id:
+                            collected[idx]["id"] = tc.id
+                        if tc.function:
+                            if tc.function.name:
+                                collected[idx]["name"] += tc.function.name
+                            if tc.function.arguments:
+                                collected[idx]["arguments"] += tc.function.arguments
+
+                if finish:
+                    if finish == "stop":
+                        final_reason = "end_turn"
+                    elif finish == "tool_calls":
+                        final_reason = "tool_use"
+                    elif finish == "length":
+                        final_reason = "max_tokens"
+
+            for idx in sorted(collected.keys()):
+                tc = collected[idx]
+                try:
+                    args = json.loads(tc["arguments"]) if tc["arguments"] else {}
+                except json.JSONDecodeError:
+                    args = {}
+                yield StreamEvent(
+                    type="tool_call",
+                    tool_call=ContentBlock(
+                        type="tool_use", id=tc["id"],
+                        name=tc["name"], input=args
+                    )
+                )
+
+            yield StreamEvent(type="done", stop_reason=final_reason)
+
+        except Exception as e:
+            import sys
+            print(f"\n❌ Ollama Stream Error: {e}", file=sys.stderr)
+            yield StreamEvent(type="text", text=f"[stream error: {e}]")
+            yield StreamEvent(type="done", stop_reason="end_turn")
 
     def get_available_models(self) -> list[str]:
         try:

@@ -30,6 +30,7 @@ def magenta(s: str) -> str:
 
 
 def print_assistant(text: str):
+    print()
     for line in text.strip().splitlines():
         print(f"  {line}")
     print()
