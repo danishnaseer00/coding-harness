@@ -1,11 +1,13 @@
 import asyncio
+import sys
 import time
 from pathlib import Path
 
 from context import clip, summarize_old_messages
 from guardrails import check_tool as check_guardrails, check_output, guardrail_rules
 from memory import WorkspaceContext, update_memory
-from providers import get_default_provider, StreamEvent
+from providers import get_default_provider
+from subagent import run_subagent
 from tools import (
     TOOLS, RISKY_TOOLS, TOOL_HANDLERS,
     approve, validate_tool, RepeatDetector, tool_note
@@ -345,35 +347,21 @@ class Agent:
 
             if tool_calls:
                 tool_results = []
-                for block in tool_calls:
-                    name = block.name
-                    args = block.input or {}
-                    self._emit("tool_call", name, args)
 
-                    if self.repeat_detector.check(name, args):
-                        result = "error: repeated identical tool call. try a different approach."
-                        self._emit("error", result)
+                delegate_tasks = {}
+                for idx, block in enumerate(tool_calls):
+                    if block.name == "delegate":
+                        self._emit("tool_call", block.name, block.input or {})
+                        delegate_tasks[idx] = asyncio.create_task(
+                            self._run_tool_safe(block)
+                        )
+
+                for idx, block in enumerate(tool_calls):
+                    if idx in delegate_tasks:
+                        result, duration = await delegate_tasks[idx]
                     else:
-                        error = validate_tool(name, args)
-                        if error:
-                            result = f"error: {error}"
-                            self._emit("error", result)
-                        elif (guard_err := check_guardrails(name, args, self.cwd)):
-                            result = f"error: guardrail blocked: {guard_err}"
-                            self._emit("error", result)
-                        elif not await approve(name, args, self.approval_policy):
-                            result = f"error: {name} was denied by user"
-                            self._emit("error", result)
-                        elif self.read_only and name in RISKY_TOOLS:
-                            result = f"error: {name} is not allowed for sub-agents (read-only mode)"
-                            self._emit("error", result)
-                        else:
-                            start = time.time()
-                            result = await self._execute_tool(name, args)
-                            duration = time.time() - start
-                            result = clip(result, MAX_TOOL_OUTPUT_CHARS)
-                            self._emit("tool_result", name, result, duration)
-                            update_memory(self.memory, name, args, result)
+                        self._emit("tool_call", block.name, block.input or {})
+                        result, duration = await self._run_tool_safe(block)
 
                     tool_results.append({
                         "type": "tool_result",
@@ -389,33 +377,43 @@ class Agent:
 
         return f"Stopped: reached max steps ({self.max_steps})"
 
-    async def _run_subagent(self, task: str, context: str = "") -> str:
-        if self.depth >= 1:
-            return "error: subagents cannot spawn subagents (max depth reached)"
+    async def _run_tool_safe(self, block) -> tuple[str, float]:
+        name = block.name
+        args = block.input or {}
 
-        prompt = f"""You are a focused sub-agent. Complete the following task using the available tools.
+        if self.repeat_detector.check(name, args):
+            result = "error: repeated identical tool call. try a different approach."
+            self._emit("error", result)
+            return result, 0
 
-Task: {task}
-{f"Context: {context}" if context else ""}
+        error = validate_tool(name, args)
+        if error:
+            result = f"error: {error}"
+            self._emit("error", result)
+            return result, 0
 
-You can read files, search code, and explore the workspace but CANNOT write files or run shell commands.
+        if guard_err := check_guardrails(name, args, self.cwd):
+            result = f"error: guardrail blocked: {guard_err}"
+            self._emit("error", result)
+            return result, 0
 
-Enforced guardrails:
-{guardrail_rules()}
+        if not await approve(name, args, self.approval_policy):
+            result = f"error: {name} was denied by user"
+            self._emit("error", result)
+            return result, 0
 
-Report back your findings concisely. When done, provide a clear summary."""
-        child = Agent(
-            cwd=self.cwd,
-            approval_policy="never",
-            read_only=True,
-            max_steps=5,
-            depth=self.depth + 1,
-            provider=self.provider,
-            callbacks=self._callbacks,
-            system_prompt=prompt,
-        )
-        result = await child.run(task)
-        return f"[Sub-agent result]\n{result}"
+        if self.read_only and name in RISKY_TOOLS:
+            result = f"error: {name} is not allowed for sub-agents (read-only mode)"
+            self._emit("error", result)
+            return result, 0
+
+        start = time.time()
+        result = await self._execute_tool(name, args)
+        duration = time.time() - start
+        result = clip(result, MAX_TOOL_OUTPUT_CHARS)
+        self._emit("tool_result", name, result, duration)
+        update_memory(self.memory, name, args, result)
+        return result, duration
 
     def _emit(self, event: str, *args):
         cb = self._callbacks.get(event)
@@ -441,8 +439,12 @@ Report back your findings concisely. When done, provide a clear summary."""
         if name == "note":
             return tool_note(self.memory, args.get("text", ""))
         if name == "delegate":
-            return await self._run_subagent(
-                args.get("task", ""), args.get("context", "")
+            return await run_subagent(
+                args.get("task", ""), args.get("context", ""),
+                cwd=self.cwd,
+                provider=self.provider,
+                callbacks=self._callbacks,
+                depth=self.depth,
             )
         handler = TOOL_HANDLERS.get(name)
         if not handler:

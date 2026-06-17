@@ -90,7 +90,7 @@ TOOLS = [
     },
     {
         "name": "delegate",
-        "description": "Spawn a read-only sub-agent for a focused subtask. The sub-agent can explore, read, and search but cannot write files or run commands. Use for independent research, subtask investigation, or parallel exploration.",
+        "description": "Spawn a read-only sub-agent for a focused subtask. Runs in parallel with other delegates. The sub-agent can explore, read, and search but cannot write files or run commands. Use for independent research, subtask investigation, or parallel exploration.",
         "input_schema": {
             "type": "object",
             "properties": {
