@@ -241,6 +241,9 @@ class Agent:
             steps += 1
             self._step_count = steps
 
+            if steps >= self.max_steps - 5:
+                self._emit("error", f"Only {self.max_steps - steps} steps remaining, prioritize the core task")
+
             if len(self.messages) > 20:
                 self.messages = await summarize_old_messages(self.messages, self.provider)
 

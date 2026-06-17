@@ -357,7 +357,7 @@ def main():
 
     agent = Agent(
         cwd=args.cwd,
-        approval_policy="auto",
+        approval_policy=args.policy,
         session_store=session_store,
     )
 
