@@ -216,11 +216,19 @@ class Agent:
             idx = 1
             if idx >= len(self.messages):
                 break
-            content = self.messages[idx].get("content", "")
+            msg = self.messages[idx]
+            content = msg.get("content", "")
             if isinstance(content, list):
-                for item in content:
-                    if isinstance(item, dict) and item.get("type") == "tool_result":
-                        return
+                types = {b.get("type") for b in content if isinstance(b, dict)}
+                if "tool_use" in types or "tool_result" in types:
+                    self.messages.pop(idx)
+                    if idx < len(self.messages):
+                        nxt = self.messages[idx].get("content", "")
+                        if isinstance(nxt, list):
+                            nxt_types = {b.get("type") for b in nxt if isinstance(b, dict)}
+                            if "tool_use" in nxt_types or "tool_result" in nxt_types:
+                                self.messages.pop(idx)
+                    continue
             self.messages.pop(idx)
 
     async def run(self, user_message: str) -> str:

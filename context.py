@@ -10,12 +10,17 @@ async def summarize_old_messages(messages: list, provider) -> list:
         return messages
 
     split = 10
-    for i in range(split - 1, -1, -1):
+    for i in range(min(split + 2, len(messages))):
         content = messages[i].get("content", "")
         if isinstance(content, list):
             for item in content:
-                if isinstance(item, dict) and item.get("type") == "tool_result":
-                    split = max(split, i + 2)
+                if isinstance(item, dict) and item.get("type") in ("tool_use", "tool_result"):
+                    if i + 1 < len(messages):
+                        nxt = messages[i + 1].get("content", "")
+                        if isinstance(nxt, list):
+                            nxt_types = {b.get("type") for b in nxt if isinstance(b, dict)}
+                            if "tool_use" in nxt_types or "tool_result" in nxt_types:
+                                split = max(split, i + 2)
                     break
 
     to_summarize = messages[:split]
