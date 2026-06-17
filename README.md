@@ -13,7 +13,7 @@ An AI coding agent that runs in your terminal — streams responses, executes to
 - **Customizable system prompt** — `SYSTEM_PROMPT.md` to control workflow, guardrails, and tool rules
 - **Sub-agent delegation** — Independent read-only sub-agents for parallel exploration
 - **Guardrails** — Built-in safety checks for tools and output
-- **Human in a LOOP** — Auto, ask, or never
+- **Human in the LOOP** — Auto, ask, or never
 
 ## Installation
 

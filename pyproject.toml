@@ -21,7 +21,7 @@ dependencies = [
 harness = "cli:main"
 
 [tool.setuptools]
-py-modules = ["cli", "agent", "tools", "memory", "context", "display", "providers", "guardrails", "eval"]
+py-modules = ["cli", "agent", "tools", "memory", "context", "providers", "guardrails", "eval", "subagent"]
 include-package-data = true
 
 [tool.setuptools.package-data]
