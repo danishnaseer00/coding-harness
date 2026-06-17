@@ -137,7 +137,7 @@ def validate_tool(name: str, args: dict) -> str | None:
     return None
 
 
-def approve(name: str, args: dict, policy: str = "ask") -> bool:
+async def approve(name: str, args: dict, policy: str = "ask") -> bool:
     if name not in RISKY_TOOLS:
         return True
     if policy == "auto":
@@ -146,7 +146,7 @@ def approve(name: str, args: dict, policy: str = "ask") -> bool:
         return False
     print(f"\n⚠️  Agent wants to run: {name}")
     print(f"   Args: {args}")
-    answer = input("   Allow? [y/N]: ").strip().lower()
+    answer = await asyncio.to_thread(lambda: input("   Allow? [y/N]: ").strip().lower())
     return answer == "y"
 
 

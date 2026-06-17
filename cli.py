@@ -26,7 +26,7 @@ SLASH_HELP = {
     "/model": "Show or change model",
     "/providers": "List available providers",
     "/clear": "Clear conversation history",
-    "/new": "Start a new session (carries last message forward)",
+    "/new": "Start a fresh session (previous session is saved)",
     "/resume [id]": "Resume a session (or /resume to pick from list)",
     "/sessions": "List sessions for this project",
     "/exit": "Exit the application",
@@ -306,6 +306,7 @@ class Harness:
                 store = SessionStore.resume(sid)
                 self.agent.messages = store.data.get("history", [])
                 self.agent.memory = store.data.get("memory", {"task": "", "files": [], "notes": []})
+                self.agent.repeat_detector.last_call = None
                 console.clear()
                 print_system(f"Resumed session {store.session_id} ({len(self.agent.messages)} turns)")
             except FileNotFoundError:
@@ -344,7 +345,10 @@ def main():
 
     if args.resume:
         try:
-            session_store = SessionStore.resume(args.resume)
+            if args.resume == "latest":
+                session_store = SessionStore.resume("latest", project_path=args.cwd)
+            else:
+                session_store = SessionStore.resume(args.resume)
         except FileNotFoundError:
             console.print(f"[yellow]Session not found: {args.resume}. Starting fresh.[/yellow]")
             session_store = SessionStore(project_path=args.cwd)

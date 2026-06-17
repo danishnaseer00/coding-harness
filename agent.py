@@ -358,7 +358,7 @@ class Agent:
                         elif (guard_err := check_guardrails(name, args, self.cwd)):
                             result = f"error: guardrail blocked: {guard_err}"
                             self._emit("error", result)
-                        elif not approve(name, args, self.approval_policy):
+                        elif not await approve(name, args, self.approval_policy):
                             result = f"error: {name} was denied by user"
                             self._emit("error", result)
                         elif self.read_only and name in RISKY_TOOLS:

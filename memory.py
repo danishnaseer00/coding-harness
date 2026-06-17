@@ -80,7 +80,7 @@ class SessionStore:
         }
 
     def save(self):
-        self.path.write_text(json.dumps(self.data, indent=2))
+        self.path.write_text(json.dumps(self.data, indent=2), encoding="utf-8")
 
     def record(self, role: str, content: str, tool: str = None, args: dict = None):
         entry = {"role": role, "content": content}
@@ -107,7 +107,7 @@ class SessionStore:
         sessions = []
         for p in sorted(SESSION_DIR.glob("*.json"), key=lambda f: f.stat().st_mtime, reverse=True):
             try:
-                data = json.loads(p.read_text())
+                data = json.loads(p.read_text(encoding="utf-8"))
             except Exception:
                 continue
             if data.get("project", "") == resolved:
@@ -120,15 +120,28 @@ class SessionStore:
         return sessions
 
     @classmethod
-    def resume(cls, session_id: str = "latest") -> "SessionStore":
+    def resume(cls, session_id: str = "latest", project_path: str | None = None) -> "SessionStore":
         if session_id == "latest":
             sessions = sorted(SESSION_DIR.glob("*.json"))
             if not sessions:
                 raise FileNotFoundError("No sessions to resume")
+            if project_path:
+                resolved = str(Path(project_path).resolve())
+                for p in reversed(sessions):
+                    try:
+                        data = json.loads(p.read_text(encoding="utf-8"))
+                    except Exception:
+                        continue
+                    if data.get("project", "") == resolved:
+                        store = cls(session_id=data["id"])
+                        store.data = data
+                        store.path = p
+                        return store
+                raise FileNotFoundError(f"No sessions found for {project_path}")
             path = sessions[-1]
         else:
             path = SESSION_DIR / f"{session_id}.json"
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         store = cls(session_id=data["id"])
         store.data = data
         store.path = path
