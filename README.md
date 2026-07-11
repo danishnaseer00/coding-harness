@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="architecture.png" alt="Coding Harness Architecture" width="700">
-</p>
-
 <h1 align="center">Coding Harness</h1>
 
 <p align="center">
@@ -128,6 +124,10 @@ Benchmark the agent against predefined tasks using `eval.py` — useful for regr
 ---
 
 ## Architecture
+
+<p align="center">
+  <img src="architecture.png" alt="Coding Harness Architecture" width="700">
+</p>
 
 | Module | Purpose |
 |---|---|
