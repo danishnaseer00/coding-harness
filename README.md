@@ -1,6 +1,21 @@
-# Coding Harness
+<p align="center">
+  <img src="architecture.png" alt="Coding Harness Architecture" width="700">
+</p>
 
-An AI coding agent that runs in your terminal — streams responses, executes tools, persists sessions, and adapts to your project.
+<h1 align="center">Coding Harness</h1>
+
+<p align="center">
+  <em>An AI coding agent that runs in your terminal — streams responses, executes tools, persists sessions, and adapts to your project.</em>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.10%2B-blue" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License MIT">
+  <img src="https://img.shields.io/badge/provider-Anthropic_%7C_OpenAI_%7C_Groq_%7C_More-orange" alt="Providers">
+  <img src="https://img.shields.io/badge/status-beta-yellow" alt="Status">
+</p>
+
+---
 
 ## Features
 
@@ -13,29 +28,34 @@ An AI coding agent that runs in your terminal — streams responses, executes to
 - **Customizable system prompt** — `SYSTEM_PROMPT.md` to control workflow, guardrails, and tool rules
 - **Sub-agent delegation** — Independent read-only sub-agents for parallel exploration
 - **Guardrails** — Built-in safety checks for tools and output
-- **Human in the LOOP** — Auto, ask, or never
+- **Human in the loop** — Auto, ask, or never approval policy
+
+---
 
 ## Installation
 
 ### Prerequisites
+
 - Python 3.10 or later
 - An API key from any supported provider
 
 ### Install
 
 ```bash
-# Clone the repo
 git clone https://github.com/danishnaseer00/coding-harness.git
 cd coding-harness
-
-# Install the harness command
 pip install -e .
 ```
 
-This installs the `harness` command globally in editable mode — any changes you make to the source files take effect immediately.
+This installs the `harness` command globally in editable mode — any changes you make to source files take effect immediately.
 
 ### Verify
-Run `harness --help` to confirm installation.
+
+```bash
+harness --help
+```
+
+---
 
 ## Quick Start
 
@@ -44,7 +64,9 @@ cd /path/to/your/project
 harness --cwd .
 ```
 
-On first run, paste your API key at the prompt — it auto-detects the provider.
+On first run, paste your API key at the prompt — it auto-detects the provider from the key prefix.
+
+---
 
 ## Usage
 
@@ -56,10 +78,11 @@ On first run, paste your API key at the prompt — it auto-detects the provider.
 | `--resume <id>` | Resume a specific session |
 | `--provider <name>` | Override the default provider |
 | `--model <name>` | Override the default model |
+| `--policy {ask,auto,never}` | Approval policy for risky tools |
 
 ### Provider configuration
 
-Set `CODING_HARNESS_PROVIDER` environment variable to your preferred provider, or switch at runtime with `/model <provider/model>`. Supported: `tokenrouter` (default), `anthropic`, `openai`, `groq`, `openrouter`.
+Set `CODING_HARNESS_PROVIDER` to your preferred provider, or switch at runtime with `/model <provider/model>`. Supported: `tokenrouter` (default), `anthropic`, `openai`, `groq`, `openrouter`.
 
 ### Slash commands
 
@@ -74,9 +97,13 @@ Set `CODING_HARNESS_PROVIDER` environment variable to your preferred provider, o
 | `/sessions` | List all sessions for the current project |
 | `/exit` | Quit the application |
 
+---
+
 ## Sessions
 
 Every conversation is auto-saved to `~/.coding-harness/sessions/<id>.json`. Sessions are grouped by project — only sessions from your current working directory appear. The summary is extracted from your first message in that session.
+
+---
 
 ## Customization
 
@@ -90,11 +117,15 @@ Place any of these files in your project root to override the built-in defaults:
 
 The harness checks your project directory first, then falls back to the bundled version, then to the embedded Python default.
 
+---
+
 ## Evaluation
 
 Benchmark the agent against predefined tasks using `eval.py` — useful for regression testing, comparing models, or tuning prompts.
 
 `EvalTask` defines a prompt and pass/fail conditions: expected patterns, forbidden patterns, required tools, step limits, or keywords in output. `run_benchmark(agent_factory, tasks)` returns a `BenchmarkReport` with pass/fail counts and per-task results, exportable to JSON via `.to_json(path)`.
+
+---
 
 ## Architecture
 
@@ -109,6 +140,14 @@ Benchmark the agent against predefined tasks using `eval.py` — useful for regr
 | `guardrails.py` | Output filtering, tool safety checks |
 | `eval.py` | Benchmark framework for testing the agent against tasks |
 
+---
+
 ## Development
 
 Editable install (`pip install -e .`) lets you edit any `.py` file and see changes immediately.
+
+---
+
+## License
+
+[MIT](LICENSE)
